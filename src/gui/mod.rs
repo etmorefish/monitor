@@ -16,6 +16,13 @@ pub fn run() -> eframe::Result<()> {
             .with_inner_size([1320.0, 830.0])
             .with_min_inner_size([1000.0, 660.0])
             .with_title("minitor"),
+        // Written out explicitly because it matters: with vsync off, eframe
+        // renders unbounded whenever a repaint is pending, so an "idle"
+        // dashboard burns 20-40% of a core instead of 0.6%.
+        glow_options: eframe::egui_glow::GlowConfiguration {
+            vsync: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
