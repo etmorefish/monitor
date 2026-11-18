@@ -45,6 +45,46 @@ pub fn nice_max(peak: f32, floor: f32) -> f32 {
     step * magnitude
 }
 
+/// Smoothed axis maximum: follows the recent peak so an idle chart is not
+/// pinned to the ceiling, and eases instead of jumping when load changes.
+pub struct AutoScale {
+    max: f32,
+}
+
+impl Default for AutoScale {
+    fn default() -> Self {
+        Self { max: 0.0 }
+    }
+}
+
+impl AutoScale {
+    pub fn update(&mut self, peak: f32, floor: f32) -> f32 {
+        let target = nice_max(peak * 1.15, floor);
+        if self.max <= 0.0 {
+            self.max = target;
+        } else {
+            self.max += (target - self.max) * 0.3;
+        }
+        self.max
+    }
+}
+
+/// Quantile of the visible window, ignoring `NaN`.
+pub fn percentile(values: &[f32], samples: usize, quantile: f32) -> f32 {
+    let start = values.len().saturating_sub(samples);
+    let mut visible: Vec<f32> = values[start..]
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect();
+    if visible.is_empty() {
+        return 0.0;
+    }
+    visible.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let index = ((visible.len() - 1) as f32 * quantile).round() as usize;
+    visible[index]
+}
+
 pub struct Series<'a> {
     pub values: &'a [f32],
     pub color: Color32,
@@ -250,8 +290,15 @@ pub fn hbar(painter: &Painter, rect: Rect, fraction: f32, color: Color32, track:
     }
 }
 
-/// One thin bar per logical CPU; hovering shows the core number and load.
-pub fn core_bars(ui: &mut Ui, rect: Rect, values: &[f32], theme: &Theme, id: Id) {
+/// One thin bar per logical CPU; hovering shows load and current clock.
+pub fn core_bars(
+    ui: &mut Ui,
+    rect: Rect,
+    values: &[f32],
+    frequencies: &[u32],
+    theme: &Theme,
+    id: Id,
+) {
     if values.is_empty() || rect.height() < 8.0 {
         return;
     }
@@ -280,8 +327,22 @@ pub fn core_bars(ui: &mut Ui, rect: Rect, values: &[f32], theme: &Theme, id: Id)
         if let Some(pointer) = response.hover_pos() {
             let index = ((pointer.x - rect.left()) / (width + gap)).floor() as usize;
             if let Some(value) = values.get(index) {
-                let rows = vec![(format!("核心 {index}"), format!("{value:.0}%"), theme.load(*value))];
-                tooltip(&painter, rect.expand(40.0), pointer, "CPU", &rows, theme);
+                let mut rows = vec![(
+                    "使用率".to_string(),
+                    format!("{value:.0}%"),
+                    theme.load(*value),
+                )];
+                if let Some(mhz) = frequencies.get(index) {
+                    if *mhz > 0 {
+                        rows.push((
+                            "频率".to_string(),
+                            format!("{:.2} GHz", *mhz as f32 / 1000.0),
+                            theme.dim,
+                        ));
+                    }
+                }
+                let title = format!("核心 {index}");
+                tooltip(&painter, rect.expand(40.0), pointer, &title, &rows, theme);
             }
         }
     }

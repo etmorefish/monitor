@@ -48,6 +48,8 @@ pub struct Dashboard {
     interval: f64,
     last_sample: Instant,
     toggles: Toggles,
+    disk_scale: chart::AutoScale,
+    net_scale: chart::AutoScale,
     applied_dark: bool,
     frames: u32,
     fps_since: Instant,
@@ -58,19 +60,32 @@ pub struct Dashboard {
 impl Dashboard {
     pub fn new() -> Self {
         let arguments: Vec<String> = std::env::args().skip(1).collect();
-        let light = arguments.iter().any(|argument| argument == "--light");
+        let _ = std::fs::write("args-debug.txt", format!("{arguments:?}"));
+        // `--light` / `--dark` win; otherwise follow the Windows app theme.
+        let forced = if arguments.iter().any(|argument| argument == "--light") {
+            Some(false)
+        } else if arguments.iter().any(|argument| argument == "--dark") {
+            Some(true)
+        } else {
+            None
+        };
+        let dark = forced
+            .or_else(crate::sys::registry::system_is_dark)
+            .unwrap_or(true);
         let lean = arguments.iter().any(|argument| argument == "--lean");
         let interval = 1.0;
         let mut sampler = Sampler::new(interval, None, !lean);
         sampler.model.interval = interval;
         Self {
             sampler,
-            dark: !light,
+            dark,
             paused: false,
             window_secs: 60.0,
             interval,
             last_sample: Instant::now(),
             toggles: Toggles::default(),
+            disk_scale: chart::AutoScale::default(),
+            net_scale: chart::AutoScale::default(),
             // `gui::style` has already applied the dark palette; let the first
             // frame switch it if we started with `--light`.
             applied_dark: true,
@@ -100,6 +115,14 @@ impl Dashboard {
             "{} {}",
             self.sampler.model.snap.date, self.sampler.model.snap.time
         );
+        let uptime = if self.sampler.model.snap.uptime > 0 {
+            format!(
+                "运行 {}",
+                crate::sys::host::uptime_human(self.sampler.model.snap.uptime)
+            )
+        } else {
+            String::new()
+        };
         let paused = self.paused;
         let dark = self.dark;
         let interval = self.interval;
@@ -110,6 +133,9 @@ impl Dashboard {
         ui.label(RichText::new("minitor").size(19.0).strong().color(theme.accent));
         ui.add_space(2.0);
         ui.label(RichText::new(&host).size(11.5).color(theme.dim));
+        if !uptime.is_empty() {
+            ui.label(RichText::new(&uptime).size(10.5).color(theme.faint));
+        }
         if paused {
             ui.add_space(6.0);
             ui.label(RichText::new("● 已暂停").size(10.5).color(theme.warn));
@@ -149,6 +175,14 @@ impl Dashboard {
         let snap = &self.sampler.model.snap;
         let history = &self.sampler.model.history;
 
+        // Axis maxima follow the 90th percentile of what is on screen.
+        let disk_peak = chart::percentile(history.io_read.slice(), samples, 0.9)
+            .max(chart::percentile(history.io_write.slice(), samples, 0.9));
+        let disk_max = self.disk_scale.update(disk_peak, 1024.0 * 1024.0);
+        let net_peak = chart::percentile(history.net_rx.slice(), samples, 0.9)
+            .max(chart::percentile(history.net_tx.slice(), samples, 0.9));
+        let net_max = self.net_scale.update(net_peak, 2048.0);
+
         if body.width() >= 1120.0 {
             let top_h = (body.height() - GAP) * 0.45;
             let bottom_h = body.height() - top_h - GAP;
@@ -162,8 +196,8 @@ impl Dashboard {
             );
             cpu_card(ui, top[0], theme, snap, history, samples, interval, now);
             memory_card(ui, top[1], theme, snap);
-            disk_card(ui, bottom[0], theme, snap, history, &mut self.toggles, samples, interval, now);
-            net_card(ui, bottom[1], theme, snap, history, &mut self.toggles, samples, interval, now);
+            disk_card(ui, bottom[0], theme, snap, history, &mut self.toggles, disk_max, samples, interval, now);
+            net_card(ui, bottom[1], theme, snap, history, &mut self.toggles, net_max, samples, interval, now);
             thermal_card(ui, bottom[2], theme, snap, history, samples, interval, now);
         } else {
             let usable = body.height() - 2.0 * GAP;
@@ -181,8 +215,8 @@ impl Dashboard {
             );
             cpu_card(ui, row1[0], theme, snap, history, samples, interval, now);
             memory_card(ui, row2[0], theme, snap);
-            disk_card(ui, row2[1], theme, snap, history, &mut self.toggles, samples, interval, now);
-            net_card(ui, row3[0], theme, snap, history, &mut self.toggles, samples, interval, now);
+            disk_card(ui, row2[1], theme, snap, history, &mut self.toggles, disk_max, samples, interval, now);
+            net_card(ui, row3[0], theme, snap, history, &mut self.toggles, net_max, samples, interval, now);
             thermal_card(ui, row3[1], theme, snap, history, samples, interval, now);
         }
     }
@@ -336,7 +370,7 @@ fn cpu_card(
         pos2(content.left(), content.bottom() - 24.0),
         pos2(content.right(), content.bottom()),
     );
-    chart::core_bars(ui, core_rect, &snap.cpu.per_core, theme, Id::unique("cpu-cores"));
+    chart::core_bars(ui, core_rect, &snap.cpu.per_core, &snap.cpu.core_mhz, theme, Id::unique("cpu-cores"));
 }
 
 fn memory_card(ui: &mut Ui, rect: Rect, theme: &Theme, snap: &Snapshot) {
@@ -413,6 +447,7 @@ fn disk_card(
     snap: &Snapshot,
     history: &History,
     toggles: &mut Toggles,
+    max: f32,
     samples: usize,
     interval: f64,
     now: u32,
@@ -472,12 +507,12 @@ fn disk_card(
     }
 
     let mut x = content.left();
-    let read_chip = legend_chip(ui, &painter, pos2(x, y), "读", theme.disk, toggles.read, theme, "legend-disk-read");
+    let read_chip = legend_chip(ui, &painter, pos2(x, y), "读", theme.io_read, toggles.read, theme, "legend-disk-read");
     if read_chip.clicked() {
         toggles.read = !toggles.read;
     }
     x = read_chip.rect.right() + 6.0;
-    let write_chip = legend_chip(ui, &painter, pos2(x, y), "写", theme.temp, toggles.write, theme, "legend-disk-write");
+    let write_chip = legend_chip(ui, &painter, pos2(x, y), "写", theme.io_write, toggles.write, theme, "legend-disk-write");
     if write_chip.clicked() {
         toggles.write = !toggles.write;
     }
@@ -489,16 +524,15 @@ fn disk_card(
     if chart_rect.height() < 40.0 {
         return;
     }
-    let peak = history.io_read.max(history.io_write.max(1024.0));
-    let max = chart::nice_max(peak * 1.2, 1024.0);
+
     let read_series = Series {
         values: history.io_read.slice(),
-        color: theme.disk,
+        color: theme.io_read,
         label: "读",
     };
     let write_series = Series {
         values: history.io_write.slice(),
-        color: theme.temp,
+        color: theme.io_write,
         label: "写",
     };
     let mut active: Vec<Series> = Vec::with_capacity(2);
@@ -533,6 +567,7 @@ fn net_card(
     snap: &Snapshot,
     history: &History,
     toggles: &mut Toggles,
+    max: f32,
     samples: usize,
     interval: f64,
     now: u32,
@@ -577,12 +612,12 @@ fn net_card(
     );
 
     let mut x = content.left();
-    let rx_chip = legend_chip(ui, &painter, pos2(x, content.top() + 24.0), "下行", theme.net, toggles.rx, theme, "legend-net-rx");
+    let rx_chip = legend_chip(ui, &painter, pos2(x, content.top() + 24.0), "下行", theme.net_rx, toggles.rx, theme, "legend-net-rx");
     if rx_chip.clicked() {
         toggles.rx = !toggles.rx;
     }
     x = rx_chip.rect.right() + 6.0;
-    let tx_chip = legend_chip(ui, &painter, pos2(x, content.top() + 24.0), "上行", theme.memory, toggles.tx, theme, "legend-net-tx");
+    let tx_chip = legend_chip(ui, &painter, pos2(x, content.top() + 24.0), "上行", theme.net_tx, toggles.tx, theme, "legend-net-tx");
     if tx_chip.clicked() {
         toggles.tx = !toggles.tx;
     }
@@ -593,16 +628,15 @@ fn net_card(
         pos2(content.right(), content.bottom() - interface_height * 2.0 - 4.0),
     );
     if chart_rect.height() >= 40.0 {
-        let peak = history.net_rx.max(history.net_tx.max(1024.0));
-        let max = chart::nice_max(peak * 1.2, 2048.0);
+
         let rx_series = Series {
             values: history.net_rx.slice(),
-            color: theme.net,
+            color: theme.net_rx,
             label: "下行",
         };
         let tx_series = Series {
             values: history.net_tx.slice(),
-            color: theme.memory,
+            color: theme.net_tx,
             label: "上行",
         };
         let mut active: Vec<Series> = Vec::with_capacity(2);
@@ -708,7 +742,7 @@ fn thermal_card(
         pos2(content.right(), (content.bottom() - footer_height).max(content.top() + 80.0)),
     );
     if chart_rect.height() >= 40.0 {
-        let max = chart::nice_max(hottest.unwrap_or(60.0).max(60.0) * 1.15, 60.0);
+        let (min, max) = temperature_axis(history.temp.slice(), samples, hottest);
         let series = [Series {
             values: history.temp.slice(),
             color: theme.temp,
@@ -720,7 +754,7 @@ fn thermal_card(
             theme,
             &LineChart {
                 series: &series,
-                min: 30.0,
+                min,
                 max,
                 unit: Unit::Celsius,
                 samples,
@@ -898,6 +932,35 @@ fn split_row(x: f32, y: f32, width: f32, height: f32, weights: &[f32]) -> Vec<Re
         cursor += w + GAP;
     }
     rects
+}
+
+/// Window the temperature axis around what is actually on screen: a fixed
+/// 30–100 °C range wastes half the card when the machine idles at 70 °C.
+fn temperature_axis(values: &[f32], samples: usize, current: Option<f32>) -> (f32, f32) {
+    let start = values.len().saturating_sub(samples);
+    let mut low = f32::INFINITY;
+    let mut high = f32::NEG_INFINITY;
+    for value in &values[start..] {
+        if value.is_finite() {
+            low = low.min(*value);
+            high = high.max(*value);
+        }
+    }
+    if !low.is_finite() {
+        let fallback = current.unwrap_or(60.0);
+        low = fallback;
+        high = fallback;
+    }
+
+    let span = ((high - low) + 12.0).clamp(40.0, 70.0);
+    let center = ((low + high) * 0.5 / 5.0).round() * 5.0;
+    let mut min = (center - span * 0.5).max(20.0);
+    let mut max = min + span;
+    if max > 105.0 {
+        max = 105.0;
+        min = (max - span).max(20.0);
+    }
+    (min.floor(), max.ceil())
 }
 
 fn parse_clock(value: &str) -> u32 {

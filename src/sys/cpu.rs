@@ -129,8 +129,42 @@ pub struct Frequency {
     pub max_mhz: u32,
 }
 
-/// `CallNtPowerInformation(ProcessorInformation)`: one array of six `u32` per
-/// logical processor, 24 bytes each.
+/// Per-core current clock plus the package maximum.
+///
+/// `CallNtPowerInformation(ProcessorInformation)` returns one array of six
+/// `u32` per logical processor, 24 bytes each.
+pub fn frequencies(logical: usize) -> Option<(Vec<u32>, u32)> {
+    if logical == 0 {
+        return None;
+    }
+    let mut buffer = vec![0u32; logical * 6];
+    let bytes = (buffer.len() * 4) as u32;
+    let status = unsafe {
+        ffi::CallNtPowerInformation(
+            11, // ProcessorInformation
+            core::ptr::null_mut(),
+            0,
+            buffer.as_mut_ptr().cast(),
+            bytes,
+        )
+    };
+    if status < 0 {
+        return None;
+    }
+
+    let mut cores = Vec::with_capacity(logical);
+    let mut max = 0u32;
+    for chunk in buffer.chunks_exact(6) {
+        cores.push(chunk[2]);
+        max = max.max(chunk[1]);
+    }
+    if max == 0 {
+        return None;
+    }
+    Some((cores, max))
+}
+
+/// Average of [`frequencies`], for the headline number.
 pub fn frequency(logical: usize) -> Option<Frequency> {
     if logical == 0 {
         return None;

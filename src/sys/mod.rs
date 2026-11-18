@@ -11,6 +11,7 @@ pub mod host;
 pub mod mem;
 pub mod net;
 pub mod pdh;
+pub mod registry;
 pub mod power;
 pub mod sel;
 

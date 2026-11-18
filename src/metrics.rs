@@ -130,6 +130,8 @@ pub struct Cpu {
     pub physical: Option<usize>,
     pub total: f32,
     pub per_core: Vec<f32>,
+    /// Current clock of each logical processor, in MHz.
+    pub core_mhz: Vec<u32>,
     pub mhz: u32,
     pub base_mhz: u32,
 }
@@ -314,7 +316,19 @@ impl Sampler {
         self.prev_cores = cores_after.unwrap_or(cores_before);
         self.prev_total = cpu_after;
 
-        let frequency = sys::cpu::frequency(self.model.snap.cpu.logical);
+        let frequency = sys::cpu::frequencies(self.model.snap.cpu.logical);
+        let (core_mhz, mhz, base_mhz) = match &frequency {
+            Some((cores, max)) => {
+                let sum: u64 = cores.iter().map(|value| *value as u64).sum();
+                let average = if cores.is_empty() {
+                    0
+                } else {
+                    (sum / cores.len() as u64) as u32
+                };
+                (cores.clone(), average, *max)
+            }
+            None => (Vec::new(), 0, 0),
+        };
         let memory = sys::mem::read().unwrap_or_default();
         let nets = self.read_nets(elapsed);
 
@@ -373,8 +387,9 @@ impl Sampler {
                 physical: self.model.snap.cpu.physical,
                 total: total_usage,
                 per_core,
-                mhz: frequency.map_or(0, |f| f.current_mhz),
-                base_mhz: frequency.map_or(0, |f| f.max_mhz),
+                core_mhz,
+                mhz,
+                base_mhz,
             },
             memory,
             volumes: self.volumes.clone(),

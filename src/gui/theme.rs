@@ -28,6 +28,11 @@ pub struct Theme {
     pub bad: Color32,
     pub battery: Color32,
     pub tooltip: Color32,
+    /// Distinct pairs: the old disk/net colours were too close to tell apart.
+    pub io_read: Color32,
+    pub io_write: Color32,
+    pub net_rx: Color32,
+    pub net_tx: Color32,
 }
 
 impl Theme {
@@ -52,6 +57,10 @@ impl Theme {
             bad: rgb(248, 113, 113),
             battery: rgb(163, 230, 53),
             tooltip: rgb(24, 34, 46),
+            io_read: rgb(102, 187, 106),
+            io_write: rgb(255, 167, 38),
+            net_rx: rgb(79, 195, 247),
+            net_tx: rgb(255, 112, 67),
         }
     }
 
@@ -76,6 +85,10 @@ impl Theme {
             bad: rgb(220, 38, 38),
             battery: rgb(101, 163, 13),
             tooltip: rgb(255, 255, 255),
+            io_read: rgb(46, 125, 50),
+            io_write: rgb(245, 127, 23),
+            net_rx: rgb(25, 118, 210),
+            net_tx: rgb(230, 74, 25),
         }
     }
 

@@ -4,6 +4,7 @@
 //! free. Sampling, formatting and the data model all come from the library.
 
 pub mod app;
+pub mod font;
 pub mod chart;
 pub mod theme;
 
@@ -22,44 +23,11 @@ pub fn run() -> eframe::Result<()> {
         "minitor",
         options,
         Box::new(|cc| {
-            install_fonts(&cc.egui_ctx);
+            font::install(&cc.egui_ctx);
             style(&cc.egui_ctx);
             Ok(Box::new(app::Dashboard::new()))
         }),
     )
-}
-
-/// Windows ships a CJK font; egui's built-in fonts are Latin-only, so Chinese
-/// labels would render as boxes without this. Missing font simply means the
-/// default typeface stays in place.
-fn install_fonts(ctx: &egui::Context) {
-    for path in [
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\msyh.ttf",
-        r"C:\Windows\Fonts\simhei.ttf",
-        r"C:\Windows\Fonts\simsun.ttc",
-    ] {
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert(
-            "cjk".to_owned(),
-            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
-        );
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .push("cjk".to_owned());
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .push("cjk".to_owned());
-        ctx.set_fonts(fonts);
-        return;
-    }
 }
 
 fn style(ctx: &egui::Context) {
