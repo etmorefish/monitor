@@ -46,7 +46,6 @@ impl Default for Toggles {
     }
 }
 
-
 pub struct Dashboard {
     sampler: Sampler,
     dark: bool,
@@ -270,7 +269,6 @@ impl eframe::App for Dashboard {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let frame_started = Instant::now();
         self.frames += 1;
-
         if self.fps_since.elapsed().as_secs_f32() >= 1.0 {
             self.fps = self.frames as f32 / self.fps_since.elapsed().as_secs_f32();
             self.frames = 0;
@@ -285,7 +283,6 @@ impl eframe::App for Dashboard {
         }
         // One frame per sample is all the dashboard needs.
         ui.ctx().request_repaint_after(Duration::from_secs_f64(self.interval));
-
 
         if ui.ctx().input(|input| input.key_pressed(egui::Key::Space)) {
             self.paused = !self.paused;
@@ -323,6 +320,7 @@ impl eframe::App for Dashboard {
         );
         self.footer(ui, footer, &theme);
         self.frame_micros = frame_started.elapsed().as_micros() as u64;
+
     }
 }
 
