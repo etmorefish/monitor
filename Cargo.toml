@@ -1,0 +1,42 @@
+[package]
+name = "minitor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Null-dependency Windows resource monitor: CPU, memory, disk, network, thermals, fan, battery"
+license = "MIT"
+publish = false
+default-run = "minitor"
+
+[features]
+default = []
+# The egui shell. Off by default so `cargo build --release` stays dependency-free.
+gui = ["dep:eframe"]
+
+[[bin]]
+name = "minitor"
+path = "src/main.rs"
+
+[[bin]]
+name = "minitor-gui"
+path = "src/gui_main.rs"
+required-features = ["gui"]
+
+# The TUI build has zero dependencies on purpose: every reading comes from a
+# documented Win32 / PDH / NT syscall, so startup is instant, the binary stays
+# small and no third-party code runs inside a process that sits in the
+# background all day. `eframe` is optional and only compiled for the GUI shell.
+[dependencies]
+eframe = { version = "0.37", optional = true, default-features = false, features = ["glow", "default_fonts"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+overflow-checks = false
+debug = false
+
+[profile.dev]
+opt-level = 1

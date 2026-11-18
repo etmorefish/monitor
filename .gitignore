@@ -1,0 +1,10 @@
+# Build output
+/target
+
+# Local logs and captures
+*.csv
+*.log
+*.txt
+
+# 实验项目的构建产物
+experiments/*/target
