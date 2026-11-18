@@ -5,8 +5,8 @@
 //! painter calls, so no plotting crate is pulled in.
 
 use eframe::egui::{
-    self, pos2, vec2, Align2, Color32, FontId, Id, Mesh, Painter, Pos2, Rect, Sense, Shape, Stroke,
-    Ui,
+    self, pos2, vec2, Align2, Color32, FontId, Id, Mesh, Painter, Pos2, Rect, RichText, Sense,
+    Shape, Stroke, Ui,
 };
 
 use super::theme::Theme;
@@ -212,7 +212,16 @@ pub fn line_chart(ui: &mut Ui, rect: Rect, theme: &Theme, chart: &LineChart, id:
                 }
                 let offset = (count - 1 - index) as f32 * chart.interval as f32;
                 let title = clock(chart.now_secs, offset);
-                tooltip(&painter, rect, pointer, &title, &rows, theme);
+                response.on_hover_ui_at_pointer(|ui| {
+                    ui.label(RichText::new(&title).strong().size(11.5).color(theme.text));
+                    for (label, value, color) in &rows {
+                        ui.label(
+                            RichText::new(format!("{label}  {value}"))
+                                .size(11.0)
+                                .color(*color),
+                        );
+                    }
+                });
             }
         }
     }
@@ -327,77 +336,27 @@ pub fn core_bars(
         if let Some(pointer) = response.hover_pos() {
             let index = ((pointer.x - rect.left()) / (width + gap)).floor() as usize;
             if let Some(value) = values.get(index) {
-                let mut rows = vec![(
-                    "使用率".to_string(),
-                    format!("{value:.0}%"),
-                    theme.load(*value),
-                )];
-                if let Some(mhz) = frequencies.get(index) {
-                    if *mhz > 0 {
-                        rows.push((
-                            "频率".to_string(),
-                            format!("{:.2} GHz", *mhz as f32 / 1000.0),
-                            theme.dim,
-                        ));
-                    }
-                }
+                let usage = format!("{value:.0}%");
+                let usage_color = theme.load(*value);
+                let frequency = frequencies.get(index).copied().filter(|mhz| *mhz > 0);
                 let title = format!("核心 {index}");
-                tooltip(&painter, rect.expand(40.0), pointer, &title, &rows, theme);
+                response.on_hover_ui_at_pointer(|ui| {
+                    ui.label(RichText::new(&title).strong().size(11.5).color(theme.text));
+                    ui.label(
+                        RichText::new(format!("使用率  {usage}"))
+                            .size(11.0)
+                            .color(usage_color),
+                    );
+                    if let Some(mhz) = frequency {
+                        ui.label(
+                            RichText::new(format!("频率  {:.2} GHz", mhz as f32 / 1000.0))
+                                .size(11.0)
+                                .color(theme.dim),
+                        );
+                    }
+                });
             }
         }
-    }
-}
-
-fn tooltip(
-    painter: &Painter,
-    bounds: Rect,
-    anchor: Pos2,
-    title: &str,
-    rows: &[(String, String, Color32)],
-    theme: &Theme,
-) {
-    let font = FontId::proportional(11.0);
-    let title_galley = painter.layout_no_wrap(title.to_owned(), font.clone(), theme.text);
-    let title_height = title_galley.size().y;
-    let mut width = title_galley.size().x;
-    let mut height = title_height;
-    let mut galleys = Vec::with_capacity(rows.len());
-    for (label, value, color) in rows {
-        let galley = painter.layout_no_wrap(format!("{label}  {value}"), font.clone(), *color);
-        width = width.max(galley.size().x);
-        height += galley.size().y + 2.0;
-        galleys.push((galley, *color));
-    }
-
-    let padding = 8.0;
-    let size = vec2(width + padding * 2.0, height + padding * 2.0);
-    let mut origin = anchor + vec2(14.0, 14.0);
-    if origin.x + size.x > bounds.right() {
-        origin.x = anchor.x - size.x - 14.0;
-    }
-    if origin.y + size.y > bounds.bottom() {
-        origin.y = anchor.y - size.y - 14.0;
-    }
-    let rect = Rect::from_min_size(origin, size);
-    painter.rect_filled(rect, egui::CornerRadius::same(7), theme.tooltip);
-    painter.rect_stroke(
-        rect,
-        egui::CornerRadius::same(7),
-        Stroke::new(1.0, theme.border),
-        egui::StrokeKind::Inside,
-    );
-
-    let mut y = rect.top() + padding;
-    painter.galley(
-        pos2(rect.left() + padding, y),
-        title_galley,
-        theme.text,
-    );
-    y += title_height + 2.0;
-    for (galley, color) in galleys {
-        let advance = galley.size().y;
-        painter.galley(pos2(rect.left() + padding, y), galley, color);
-        y += advance + 2.0;
     }
 }
 
