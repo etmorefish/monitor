@@ -5,7 +5,7 @@
 //! painter calls, so no plotting crate is pulled in.
 
 use eframe::egui::{
-    self, pos2, vec2, Align2, Color32, FontId, Id, Mesh, Painter, Pos2, Rect, RichText, Sense,
+    self, pos2, vec2, Align2, Color32, FontId, Id, Mesh, Painter, Pos2, Rect, Sense,
     Shape, Stroke, Ui,
 };
 
@@ -212,18 +212,56 @@ pub fn line_chart(ui: &mut Ui, rect: Rect, theme: &Theme, chart: &LineChart, id:
                 }
                 let offset = (count - 1 - index) as f32 * chart.interval as f32;
                 let title = clock(chart.now_secs, offset);
-                response.on_hover_ui_at_pointer(|ui| {
-                    ui.label(RichText::new(&title).strong().size(11.5).color(theme.text));
-                    for (label, value, color) in &rows {
-                        ui.label(
-                            RichText::new(format!("{label}  {value}"))
-                                .size(11.0)
-                                .color(*color),
-                        );
-                    }
-                });
+                // Painted into the chart itself: a real egui tooltip lives on its
+                // own layer and forces a repaint every frame while open.
+                hover_box(&painter, plot, &title, &rows, theme);
             }
         }
+    }
+}
+
+/// Compact readout drawn inside the plot area (no extra layer, no repaints).
+fn hover_box(
+    painter: &Painter,
+    plot: Rect,
+    title: &str,
+    rows: &[(String, String, Color32)],
+    theme: &Theme,
+) {
+    let width = 108.0;
+    let height = 18.0 + rows.len() as f32 * 13.0;
+    let origin = pos2((plot.right() - width - 6.0).max(plot.left() + 4.0), plot.top() + 6.0);
+    let rect = Rect::from_min_size(origin, vec2(width, height));
+    painter.rect_filled(rect, egui::CornerRadius::same(6), Theme::alpha(theme.card, 238));
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(6),
+        Stroke::new(1.0, theme.border),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        origin + vec2(8.0, 5.0),
+        Align2::LEFT_TOP,
+        title,
+        FontId::proportional(9.5),
+        theme.faint,
+    );
+    for (index, (label, value, color)) in rows.iter().enumerate() {
+        let y = origin.y + 20.0 + index as f32 * 13.0;
+        painter.text(
+            pos2(origin.x + 8.0, y),
+            Align2::LEFT_TOP,
+            label,
+            FontId::proportional(9.0),
+            *color,
+        );
+        painter.text(
+            pos2(rect.right() - 8.0, y),
+            Align2::RIGHT_TOP,
+            value,
+            FontId::proportional(9.0),
+            theme.text,
+        );
     }
 }
 
@@ -343,21 +381,20 @@ pub fn core_bars(
                 let usage_color = theme.load(*value);
                 let frequency = frequencies.get(index).copied().filter(|mhz| *mhz > 0);
                 let title = format!("核心 {index}");
-                response.on_hover_ui_at_pointer(|ui| {
-                    ui.label(RichText::new(&title).strong().size(11.5).color(theme.text));
-                    ui.label(
-                        RichText::new(format!("使用率  {usage}"))
-                            .size(11.0)
-                            .color(usage_color),
-                    );
-                    if let Some(mhz) = frequency {
-                        ui.label(
-                            RichText::new(format!("频率  {:.2} GHz", mhz as f32 / 1000.0))
-                                .size(11.0)
-                                .color(theme.dim),
-                        );
-                    }
-                });
+                let mut rows = vec![("使用率".to_string(), usage, usage_color)];
+                if let Some(mhz) = frequency {
+                    rows.push((
+                        "频率".to_string(),
+                        format!("{:.2} GHz", mhz as f32 / 1000.0),
+                        theme.dim,
+                    ));
+                }
+                // Sit just above the bars so the readout stays inside the card.
+                let plot = Rect::from_min_max(
+                    pos2(rect.left(), rect.top() - 44.0),
+                    pos2(rect.right(), rect.top() - 6.0),
+                );
+                hover_box(&painter, plot, &title, &rows, theme);
             }
         }
     }
