@@ -58,6 +58,7 @@ pub struct Dashboard {
     net_scale: chart::AutoScale,
     applied_dark: bool,
     page: Page,
+    copied: Option<(String, Instant)>,
     frames: u32,
     fps_since: Instant,
     fps: f32,
@@ -103,6 +104,7 @@ impl Dashboard {
             // frame switch it if we started with `--light`.
             applied_dark: true,
             page,
+            copied: None,
             frames: 0,
             fps_since: Instant::now(),
             fps: 0.0,
@@ -217,7 +219,7 @@ impl Dashboard {
             cpu_card(ui, top[0], theme, snap, history, samples, interval, now);
             memory_card(ui, top[1], theme, snap);
             disk_card(ui, bottom[0], theme, snap, history, &mut self.toggles, disk_max, samples, interval, now);
-            net_card(ui, bottom[1], theme, snap, history, &mut self.toggles, net_max, samples, interval, now);
+            net_card(ui, bottom[1], theme, snap, history, &mut self.toggles, &mut self.copied, net_max, samples, interval, now);
             thermal_card(ui, bottom[2], theme, snap, history, samples, interval, now);
         } else {
             let usable = body.height() - 2.0 * GAP;
@@ -236,7 +238,7 @@ impl Dashboard {
             cpu_card(ui, row1[0], theme, snap, history, samples, interval, now);
             memory_card(ui, row2[0], theme, snap);
             disk_card(ui, row2[1], theme, snap, history, &mut self.toggles, disk_max, samples, interval, now);
-            net_card(ui, row3[0], theme, snap, history, &mut self.toggles, net_max, samples, interval, now);
+            net_card(ui, row3[0], theme, snap, history, &mut self.toggles, &mut self.copied, net_max, samples, interval, now);
             thermal_card(ui, row3[1], theme, snap, history, samples, interval, now);
         }
     }
@@ -271,6 +273,7 @@ impl eframe::App for Dashboard {
             self.fps = self.frames as f32 / self.fps_since.elapsed().as_secs_f32();
             self.frames = 0;
             self.fps_since = Instant::now();
+
         }
 
         let now = Instant::now();
@@ -308,7 +311,7 @@ impl eframe::App for Dashboard {
         );
         match self.page {
             Page::Overview => self.cards(ui, body, &theme),
-            Page::Hardware => hardware_page(ui, body, &theme, &self.sampler.model.snap),
+            Page::Hardware => hardware_page(ui, body, &theme, &self.sampler.model.snap, &mut self.copied),
         }
 
         let footer = Rect::from_min_size(
@@ -648,6 +651,7 @@ fn net_card(
     snap: &Snapshot,
     history: &History,
     toggles: &mut Toggles,
+    copied: &mut Option<(String, Instant)>,
     max: f32,
     samples: usize,
     interval: f64,
@@ -762,19 +766,28 @@ fn net_card(
             if net.up { theme.dim } else { theme.faint },
         );
         // Prefer the address: aggregate rates are already shown at the top.
-        let right = if net.ipv4.is_empty() {
-            format!("↓{} ↑{}", format::rate(net.rx_bps), format::rate(net.tx_bps))
+        if net.ipv4.is_empty() {
+            text(
+                &painter,
+                pos2(content.right(), y),
+                Align2::RIGHT_TOP,
+                format!("↓{} ↑{}", format::rate(net.rx_bps), format::rate(net.tx_bps)),
+                9.5,
+                theme.faint,
+            );
         } else {
-            net.ipv4.clone()
-        };
-        text(
-            &painter,
-            pos2(content.right(), y),
-            Align2::RIGHT_TOP,
-            right,
-            9.5,
-            theme.faint,
-        );
+            copy_chip(
+                ui,
+                &painter,
+                pos2(content.right(), y),
+                Align2::RIGHT_TOP,
+                &net.ipv4,
+                9.5,
+                theme.net,
+                theme,
+                copied,
+            );
+        }
         y += interface_height;
     }
 }
@@ -1065,7 +1078,13 @@ fn parse_clock(value: &str) -> u32 {
 }
 // --- hardware page ----------------------------------------------------------
 
-fn hardware_page(ui: &mut Ui, body: Rect, theme: &Theme, snap: &Snapshot) {
+fn hardware_page(
+    ui: &mut Ui,
+    body: Rect,
+    theme: &Theme,
+    snap: &Snapshot,
+    copied: &mut Option<(String, Instant)>,
+) {
     let hardware = &snap.hardware;
     let gap = GAP;
     let half = (body.width() - gap) * 0.5;
@@ -1193,13 +1212,36 @@ fn hardware_page(ui: &mut Ui, body: Rect, theme: &Theme, snap: &Snapshot) {
             theme.text,
         );
         y += 18.0;
-        let detail = if net.ipv4.is_empty() {
-            format!("{} · 未获取到 IPv4", link_speed(net.link_bits))
+        let speed = link_speed(net.link_bits);
+        let speed_rect = painter.text(
+            pos2(content.left() + 8.0, y),
+            Align2::LEFT_TOP,
+            &speed,
+            FontId::proportional(9.5),
+            theme.dim,
+        );
+        if net.ipv4.is_empty() {
+            painter.text(
+                pos2(speed_rect.right() + 8.0, y),
+                Align2::LEFT_TOP,
+                "未获取到 IPv4",
+                FontId::proportional(9.5),
+                theme.faint,
+            );
         } else {
-            format!("{} · {}", link_speed(net.link_bits), net.ipv4)
-        };
-        text(&painter, pos2(content.left() + 8.0, y), Align2::LEFT_TOP, detail, 9.5, theme.dim);
-        y += 22.0;
+            copy_chip(
+                ui,
+                &painter,
+                pos2(speed_rect.right() + 12.0, y),
+                Align2::LEFT_TOP,
+                &net.ipv4,
+                10.0,
+                theme.net,
+                theme,
+                copied,
+            );
+        }
+        y += 24.0;
     }
 
     match &snap.wifi {
@@ -1223,14 +1265,24 @@ fn hardware_page(ui: &mut Ui, body: Rect, theme: &Theme, snap: &Snapshot) {
         }
         None => {
             if snap.nets.iter().any(|net| net.name.contains("Wi-Fi") || net.name.contains("WLAN")) {
-                text(
-                    &painter,
-                    pos2(content.left(), y + 4.0),
+                let hint = painter.text(
+                    pos2(content.left(), y + 6.0),
                     Align2::LEFT_TOP,
-                    "Wi-Fi 详情需要定位权限（设置 → 隐私和安全性 → 定位）",
-                    9.0,
+                    "Wi-Fi 名称需要定位权限",
+                    FontId::proportional(9.5),
                     theme.faint,
                 );
+                let button = chip_button(
+                    ui,
+                    &painter,
+                    pos2(hint.right() + 8.0, y + 2.0),
+                    Align2::LEFT_TOP,
+                    "打开定位设置",
+                    theme.accent,
+                );
+                if button.clicked() {
+                    crate::sys::clipboard::open_uri("ms-settings:privacy-location");
+                }
             }
         }
     }
@@ -1264,4 +1316,60 @@ fn rate_from_kbps(kbps: u32) -> String {
     } else {
         format!("{kbps} Kbps")
     }
+}
+/// A value that copies itself to the clipboard when clicked.
+#[allow(clippy::too_many_arguments)]
+fn copy_chip(
+    ui: &mut Ui,
+    painter: &Painter,
+    pos: Pos2,
+    anchor: Align2,
+    value: &str,
+    size: f32,
+    color: Color32,
+    theme: &Theme,
+    copied: &mut Option<(String, Instant)>,
+) {
+    let label = format!("{value}  复制");
+    let galley = painter.layout_no_wrap(label.clone(), FontId::proportional(size), color);
+    let rect = anchor.anchor_size(pos, galley.size() + vec2(34.0, 10.0));
+    let response = ui.put(
+        rect,
+        egui::Button::new(RichText::new(label).size(size).color(color))
+            .wrap_mode(egui::TextWrapMode::Extend),
+    );
+    if response.clicked() && crate::sys::clipboard::set_text(value) {
+        *copied = Some((value.to_string(), Instant::now()));
+        ui.ctx().request_repaint_after(Duration::from_millis(1600));
+    }
+
+    if let Some((text, at)) = copied.as_ref() {
+        if text == value && at.elapsed() < Duration::from_millis(1500) {
+            painter.text(
+                pos2(rect.right() + 6.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                "已复制",
+                FontId::proportional(9.0),
+                theme.ok,
+            );
+        }
+    }
+}
+
+/// Small rounded label that behaves like a button.
+fn chip_button(
+    ui: &mut Ui,
+    painter: &Painter,
+    pos: Pos2,
+    anchor: Align2,
+    label: &str,
+    color: Color32,
+) -> egui::Response {
+    let galley = painter.layout_no_wrap(label.to_owned(), FontId::proportional(9.5), color);
+    let rect = anchor.anchor_size(pos, galley.size() + vec2(34.0, 10.0));
+    ui.put(
+        rect,
+        egui::Button::new(RichText::new(label).size(9.5).color(color))
+            .wrap_mode(egui::TextWrapMode::Extend),
+    )
 }

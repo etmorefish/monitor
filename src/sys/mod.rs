@@ -4,6 +4,7 @@
 //! has to stay in the microsecond range: syscall + one small parse, no COM, no
 //! WMI, no spawned processes, no per-tick string formatting.
 
+pub mod clipboard;
 pub mod cpu;
 pub mod disk;
 pub mod ffi;
