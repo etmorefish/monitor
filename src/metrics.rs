@@ -128,6 +128,11 @@ pub struct Cpu {
     pub brand: String,
     pub logical: usize,
     pub physical: Option<usize>,
+    /// L1 / L2 / L3 totals in bytes.
+    pub cache_l1: u64,
+    pub cache_l2: u64,
+    pub cache_l3: u64,
+
     pub total: f32,
     pub per_core: Vec<f32>,
     /// Current clock of each logical processor, in MHz.
@@ -221,6 +226,8 @@ impl Sampler {
         let logical = sys::cpu::logical_processors();
         let physical = sys::cpu::physical_cores(logical);
         let brand = sys::cpu::brand();
+        let (cache_l1, cache_l2, cache_l3) = sys::cpu::caches().unwrap_or((0, 0, 0));
+
 
         let mut sampler = Self {
             per_cpu: PerCpuBuffer::new(),
@@ -250,6 +257,10 @@ impl Sampler {
                         brand,
                         logical,
                         physical,
+                        cache_l1,
+                        cache_l2,
+                        cache_l3,
+
                         ..Cpu::default()
                     },
                     ..Snapshot::default()
@@ -377,20 +388,19 @@ impl Sampler {
             self.prev_self = Some((ticks, Instant::now()));
         }
 
+        // Static topology comes from the template; only the live numbers change.
+        let mut cpu = self.model.snap.cpu.clone();
+        cpu.total = total_usage;
+        cpu.per_core = per_core;
+        cpu.core_mhz = core_mhz;
+        cpu.mhz = mhz;
+        cpu.base_mhz = base_mhz;
+
         let snapshot = Snapshot {
             date,
             time,
             uptime: sys::host::uptime_seconds(),
-            cpu: Cpu {
-                brand: self.model.snap.cpu.brand.clone(),
-                logical: self.model.snap.cpu.logical,
-                physical: self.model.snap.cpu.physical,
-                total: total_usage,
-                per_core,
-                core_mhz,
-                mhz,
-                base_mhz,
-            },
+            cpu,
             memory,
             volumes: self.volumes.clone(),
             io_read,

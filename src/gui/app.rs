@@ -340,9 +340,67 @@ fn cpu_card(
         );
     }
 
+    // Topology and caches, the same set Task Manager lists.
+    let cores = snap.cpu.physical.unwrap_or(snap.cpu.logical);
+    let info = format!(
+        "{} 核 / {} 线程 · L1 {} · L2 {} · L3 {}",
+        cores,
+        snap.cpu.logical,
+        format::bytes(snap.cpu.cache_l1),
+        format::bytes(snap.cpu.cache_l2),
+        format::bytes(snap.cpu.cache_l3),
+    );
+    let legend_width = if content.width() > 460.0 { 150.0 } else { 0.0 };
+    let text_width = ((content.width() - legend_width) / 5.8).max(16.0) as usize;
+    text(
+        &painter,
+        pos2(content.left(), content.top() + 48.0),
+        Align2::LEFT_TOP,
+        format::truncate(&info, text_width),
+        9.5,
+        theme.faint,
+    );
+
+    if legend_width > 0.0 {
+        // Colour key for the core bars: blue = near idle, red = near turbo.
+        let base = snap.cpu.base_mhz.max(800) as f32;
+        let bar_width = 44.0;
+        let label = format!("{:.1}–{:.1} GHz", base * 0.3 / 1000.0, base * 3.2 / 1000.0);
+        let label_left = content.right() - 74.0;
+        let bar_left = label_left - bar_width - 6.0;
+        text(
+            &painter,
+            pos2(bar_left - 6.0, content.top() + 48.0),
+            Align2::RIGHT_TOP,
+            "频率",
+            9.0,
+            theme.faint,
+        );
+        for step in 0..bar_width as i32 {
+            let t = step as f32 / bar_width;
+            let mhz = (base * (0.3 + t * 2.9)) as u32;
+            painter.rect_filled(
+                Rect::from_min_size(
+                    pos2(bar_left + step as f32, content.top() + 49.0),
+                    vec2(1.0, 6.0),
+                ),
+                CornerRadius::same(0),
+                theme.frequency(mhz, snap.cpu.base_mhz),
+            );
+        }
+        text(
+            &painter,
+            pos2(content.right(), content.top() + 48.0),
+            Align2::RIGHT_TOP,
+            &label,
+            9.0,
+            theme.faint,
+        );
+    }
+
     let chart_rect = Rect::from_min_max(
-        pos2(content.left(), content.top() + 46.0),
-        pos2(content.right(), (content.bottom() - 30.0).max(content.top() + 80.0)),
+        pos2(content.left(), content.top() + 68.0),
+        pos2(content.right(), (content.bottom() - 30.0).max(content.top() + 90.0)),
     );
     let series = [Series {
         values: history.cpu.slice(),
@@ -370,7 +428,7 @@ fn cpu_card(
         pos2(content.left(), content.bottom() - 24.0),
         pos2(content.right(), content.bottom()),
     );
-    chart::core_bars(ui, core_rect, &snap.cpu.per_core, &snap.cpu.core_mhz, theme, Id::unique("cpu-cores"));
+    chart::core_bars(ui, core_rect, &snap.cpu.per_core, &snap.cpu.core_mhz, snap.cpu.base_mhz, theme, Id::unique("cpu-cores"));
 }
 
 fn memory_card(ui: &mut Ui, rect: Rect, theme: &Theme, snap: &Snapshot) {

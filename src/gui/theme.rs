@@ -113,6 +113,34 @@ impl Theme {
         }
     }
 
+    /// Colour ramp for a core's current clock: cool when idle, warm near turbo.
+    ///
+    /// The reference is the package base clock, so the same core reads blue at
+    /// 0.5× base and red at 3× base regardless of the machine.
+    pub fn frequency(&self, mhz: u32, base_mhz: u32) -> Color32 {
+        let base = base_mhz.max(800) as f32;
+        let ratio = (mhz as f32 / base).clamp(0.3, 3.2);
+        let t = ((ratio - 0.3) / 2.9).clamp(0.0, 1.0);
+        let stops: [(f32, Color32); 5] = if self.dark {
+            [
+                (0.0, rgb(59, 130, 246)),
+                (0.35, rgb(34, 211, 238)),
+                (0.60, rgb(52, 211, 153)),
+                (0.82, rgb(251, 191, 36)),
+                (1.0, rgb(239, 68, 68)),
+            ]
+        } else {
+            [
+                (0.0, rgb(37, 99, 235)),
+                (0.35, rgb(8, 145, 178)),
+                (0.60, rgb(5, 150, 105)),
+                (0.82, rgb(217, 119, 6)),
+                (1.0, rgb(220, 38, 38)),
+            ]
+        };
+        ramp(t, &stops)
+    }
+
     pub fn alpha(color: Color32, alpha: u8) -> Color32 {
         Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
     }
@@ -148,4 +176,22 @@ impl Theme {
         visuals.override_text_color = None;
         ctx.set_visuals(visuals);
     }
+}
+/// Piecewise-linear colour ramp over `stops` (sorted by position).
+fn ramp(t: f32, stops: &[(f32, Color32)]) -> Color32 {
+    let mut previous = stops[0];
+    for stop in stops {
+        if t <= stop.0 {
+            let span = (stop.0 - previous.0).max(0.0001);
+            let k = ((t - previous.0) / span).clamp(0.0, 1.0);
+            let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * k).round() as u8;
+            return Color32::from_rgb(
+                mix(previous.1.r(), stop.1.r()),
+                mix(previous.1.g(), stop.1.g()),
+                mix(previous.1.b(), stop.1.b()),
+            );
+        }
+        previous = *stop;
+    }
+    stops[stops.len() - 1].1
 }

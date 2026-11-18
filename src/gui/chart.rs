@@ -305,6 +305,7 @@ pub fn core_bars(
     rect: Rect,
     values: &[f32],
     frequencies: &[u32],
+    base_mhz: u32,
     theme: &Theme,
     id: Id,
 ) {
@@ -319,11 +320,13 @@ pub fn core_bars(
 
     for (index, value) in values.iter().enumerate() {
         let x = rect.left() + index as f32 * (width + gap);
-        painter.rect_filled(
-            Rect::from_min_size(pos2(x, rect.top()), vec2(width, rect.height())),
-            egui::CornerRadius::same(2),
-            theme.grid,
-        );
+        // Background = current clock (cool idle → warm turbo); bar height = load.
+        let cell = Rect::from_min_size(pos2(x, rect.top()), vec2(width, rect.height()));
+        let tint = match frequencies.get(index) {
+            Some(mhz) if *mhz > 0 => Theme::alpha(theme.frequency(*mhz, base_mhz), 88),
+            _ => theme.grid,
+        };
+        painter.rect_filled(cell, egui::CornerRadius::same(2), tint);
         let height = (value / 100.0).clamp(0.0, 1.0) * rect.height();
         let bar = Rect::from_min_size(
             pos2(x, rect.bottom() - height.max(1.5)),

@@ -247,6 +247,48 @@ pub fn physical_cores(logical: usize) -> Option<usize> {
     Some(cores)
 }
 
+/// Total L1 / L2 / L3 cache in bytes, summed over every reported cache.
+///
+/// `GetLogicalProcessorInformation` reports one entry per cache per core, so
+/// the totals match what Task Manager shows (L1 counts instruction + data).
+pub fn caches() -> Option<(u64, u64, u64)> {
+    let mut needed: u32 = 0;
+    unsafe { ffi::GetLogicalProcessorInformation(core::ptr::null_mut(), &mut needed) };
+    if needed == 0 {
+        return None;
+    }
+    let entry = core::mem::size_of::<ffi::SYSTEM_LOGICAL_PROCESSOR_INFORMATION>();
+    let mut buffer = vec![0u8; needed as usize + entry];
+    let mut written: u32 = buffer.len() as u32;
+    let ok = unsafe {
+        ffi::GetLogicalProcessorInformation(
+            buffer.as_mut_ptr() as *mut ffi::SYSTEM_LOGICAL_PROCESSOR_INFORMATION,
+            &mut written,
+        )
+    };
+    if failed(ok) || (written as usize) < entry {
+        return None;
+    }
+
+    let mut totals = [0u64; 4];
+    for index in 0..written as usize / entry {
+        let base = unsafe { buffer.as_ptr().add(index * entry) };
+        let relation = unsafe { read_i64(base, 8) as u32 };
+        if relation != ffi::RELATION_CACHE {
+            continue;
+        }
+        // CACHE_DESCRIPTOR: Level @16, Associativity @17, LineSize @18,
+        // CacheSize @20, Type @24.
+        let level = unsafe { *base.add(16) } as usize;
+        let size = unsafe { read_i64(base, 20) as u32 } as u64;
+        if (1..=3).contains(&level) {
+            totals[level] += size;
+        }
+    }
+    Some((totals[1], totals[2], totals[3]))
+}
+
+
 /// CPUID brand string (leaves 0x8000_0002..4), 48 UTF-8-safe bytes.
 pub fn brand() -> String {
     #[cfg(target_arch = "x86_64")]

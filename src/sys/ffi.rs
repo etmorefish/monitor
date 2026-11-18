@@ -52,6 +52,7 @@ pub const SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION: u32 = 8;
 
 // GetLogicalProcessorInformation relationships.
 pub const RELATION_PROCESSOR_CORE: DWORD = 0;
+pub const RELATION_CACHE: DWORD = 2;
 
 // MIB_IFROW.dwOperStatus
 pub const IF_OPER_STATUS_CONNECTED: DWORD = 4;
