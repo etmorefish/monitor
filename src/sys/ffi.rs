@@ -342,6 +342,7 @@ extern "system" {
 #[link(name = "iphlpapi")]
 extern "system" {
     pub fn GetIfTable(table: *mut c_void, size: *mut DWORD, order: BOOL) -> DWORD;
+    pub fn GetIpAddrTable(table: *mut c_void, size: *mut DWORD, order: BOOL) -> DWORD;
     pub fn GetIfEntry(row: *mut MIB_IFROW) -> DWORD;
     pub fn GetIfTable2(table: *mut *mut c_void) -> DWORD;
     pub fn FreeMibTable(memory: *mut c_void);

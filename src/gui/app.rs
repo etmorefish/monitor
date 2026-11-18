@@ -21,6 +21,12 @@ const MARGIN: f32 = 16.0;
 const HEADER_H: f32 = 52.0;
 const FOOTER_H: f32 = 26.0;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Overview,
+    Hardware,
+}
+
 #[derive(Clone, Copy)]
 struct Toggles {
     read: bool,
@@ -51,6 +57,7 @@ pub struct Dashboard {
     disk_scale: chart::AutoScale,
     net_scale: chart::AutoScale,
     applied_dark: bool,
+    page: Page,
     frames: u32,
     fps_since: Instant,
     fps: f32,
@@ -73,6 +80,12 @@ impl Dashboard {
             .or_else(crate::sys::registry::system_is_dark)
             .unwrap_or(true);
         let lean = arguments.iter().any(|argument| argument == "--lean");
+        // Handy for screenshots and for opening straight on the details page.
+        let page = if arguments.iter().any(|argument| argument == "--hardware") {
+            Page::Hardware
+        } else {
+            Page::Overview
+        };
         let interval = 1.0;
         let mut sampler = Sampler::new(interval, None, !lean);
         sampler.model.interval = interval;
@@ -89,6 +102,7 @@ impl Dashboard {
             // `gui::style` has already applied the dark palette; let the first
             // frame switch it if we started with `--light`.
             applied_dark: true,
+            page,
             frames: 0,
             fps_since: Instant::now(),
             fps: 0.0,
@@ -139,6 +153,12 @@ impl Dashboard {
         if paused {
             ui.add_space(6.0);
             ui.label(RichText::new("● 已暂停").size(10.5).color(theme.warn));
+        }
+        ui.add_space(14.0);
+        for (page, label) in [(Page::Overview, "总览"), (Page::Hardware, "硬件")] {
+            if ui.selectable_label(self.page == page, label).clicked() {
+                self.page = page;
+            }
         }
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -286,7 +306,10 @@ impl eframe::App for Dashboard {
             pos2(full.left() + MARGIN, full.top() + HEADER_H),
             pos2(full.right() - MARGIN, full.bottom() - FOOTER_H),
         );
-        self.cards(ui, body, &theme);
+        match self.page {
+            Page::Overview => self.cards(ui, body, &theme),
+            Page::Hardware => hardware_page(ui, body, &theme, &self.sampler.model.snap),
+        }
 
         let footer = Rect::from_min_size(
             pos2(full.left() + MARGIN, full.bottom() - FOOTER_H + 3.0),
@@ -635,7 +658,13 @@ fn net_card(
         .iter()
         .find(|net| net.up)
         .or_else(|| snap.nets.first());
-    let subtitle = interface.map(|net| pretty(&net.name)).unwrap_or_default();
+    let subtitle = {
+        let name = interface.map(|net| pretty(&net.name)).unwrap_or_default();
+        match &snap.wifi {
+            Some(wifi) if !wifi.ssid.is_empty() => format!("{name} · {}", wifi.ssid),
+            _ => name,
+        }
+    };
     let content = card(ui, rect, theme, "网络", &subtitle, theme.net);
     if content.height() < 90.0 {
         return;
@@ -732,11 +761,17 @@ fn net_card(
             9.5,
             if net.up { theme.dim } else { theme.faint },
         );
+        // Prefer the address: aggregate rates are already shown at the top.
+        let right = if net.ipv4.is_empty() {
+            format!("↓{} ↑{}", format::rate(net.rx_bps), format::rate(net.tx_bps))
+        } else {
+            net.ipv4.clone()
+        };
         text(
             &painter,
             pos2(content.right(), y),
             Align2::RIGHT_TOP,
-            format!("↓{} ↑{}", format::rate(net.rx_bps), format::rate(net.tx_bps)),
+            right,
             9.5,
             theme.faint,
         );
@@ -1027,4 +1062,206 @@ fn parse_clock(value: &str) -> u32 {
     let minutes: u32 = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
     let seconds: u32 = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
     hours * 3600 + minutes * 60 + seconds
+}
+// --- hardware page ----------------------------------------------------------
+
+fn hardware_page(ui: &mut Ui, body: Rect, theme: &Theme, snap: &Snapshot) {
+    let hardware = &snap.hardware;
+    let gap = GAP;
+    let half = (body.width() - gap) * 0.5;
+    let row_height = (body.height() - gap) * 0.5;
+    let top_left = Rect::from_min_size(body.min, vec2(half, row_height));
+    let top_right = Rect::from_min_size(pos2(body.left() + half + gap, body.top()), vec2(half, row_height));
+    let bottom_left = Rect::from_min_size(pos2(body.left(), body.top() + row_height + gap), vec2(half, row_height));
+    let bottom_right = Rect::from_min_size(
+        pos2(body.left() + half + gap, body.top() + row_height + gap),
+        vec2(half, row_height),
+    );
+
+    // Board + BIOS
+    let content = card(ui, top_left, theme, "主板与 BIOS", &hardware.board_product, theme.cpu);
+    let painter = ui.painter_at(content);
+    let mut y = content.top() + 10.0;
+    let mut row = |label: &str, value: &str| {
+        info_row(&painter, content, y, theme, label, value);
+        y += 34.0;
+    };
+    row("主板", &format!("{} {}", hardware.board_vendor, hardware.board_product));
+    row("板型版本", &hardware.board_version);
+    row("BIOS", &format!("{} {}", hardware.bios_vendor, hardware.bios_version));
+    row("发布日期", &hardware.bios_date);
+    row("SMBIOS", &hardware.smbios_version);
+    row(
+        "内存插槽",
+        &format!("{}/{} 已用", hardware.slots_used(), hardware.slots_total),
+    );
+    text(
+        &painter,
+        pos2(content.left(), content.bottom() - 4.0),
+        Align2::LEFT_BOTTOM,
+        "来源：SMBIOS 固件表 / 存储设备描述 / 注册表，免管理员",
+        9.0,
+        theme.faint,
+    );
+
+    // Memory modules
+    let content = card(ui, top_right, theme, "内存", &format!("{} 条", hardware.modules.len()), theme.memory);
+    let painter = ui.painter_at(content);
+    let mut y = content.top() + 6.0;
+    let speed = hardware.modules.iter().map(|module| module.speed_mts).max().unwrap_or(0);
+    let kind = hardware.modules.first().map(|module| module.kind.clone()).unwrap_or_default();
+    info_row(&painter, content, y, theme, "总容量", &format::bytes(hardware.memory_total()));
+    y += 30.0;
+    info_row(
+        &painter,
+        content,
+        y,
+        theme,
+        "类型 / 速度",
+        &format!("{kind} {speed} MT/s"),
+    );
+    y += 30.0;
+    info_row(
+        &painter,
+        content,
+        y,
+        theme,
+        "插槽",
+        &format!("{}/{}", hardware.slots_used(), hardware.slots_total),
+    );
+    y += 34.0;
+
+    text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, "每条明细", 9.0, theme.faint);
+    y += 20.0;
+    for module in hardware.modules.iter().take(8) {
+        let label = format!(
+            "{} · {} MB · {} MT/s",
+            module.slot,
+            module.size_bytes / 1024 / 1024,
+            module.speed_mts
+        );
+        text(
+            &painter,
+            pos2(content.left(), y),
+            Align2::LEFT_TOP,
+            format::truncate(&label, (content.width() / 6.6) as usize),
+            10.0,
+            theme.dim,
+        );
+        y += 21.0;
+    }
+
+    // Storage
+    let content = card(ui, bottom_left, theme, "存储", "", theme.disk);
+    let painter = ui.painter_at(content);
+    let mut y = content.top() + 6.0;
+    for model in hardware.disks.iter().take(4) {
+        text(
+            &painter,
+            pos2(content.left(), y),
+            Align2::LEFT_TOP,
+            format::truncate(model, (content.width() / 6.2) as usize),
+            11.0,
+            theme.text,
+        );
+        y += 24.0;
+    }
+    y += 6.0;
+    for volume in snap.volumes.iter().take(4) {
+        let label = format!(
+            "{}: {} / {} · {:.0}%",
+            volume.letter,
+            format::bytes(volume.used()),
+            format::bytes(volume.total),
+            volume.percent()
+        );
+        text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, label, 10.0, theme.dim);
+        y += 20.0;
+    }
+
+    // Network
+    let content = card(ui, bottom_right, theme, "网络", "", theme.net);
+    let painter = ui.painter_at(content);
+    let mut y = content.top() + 4.0;
+    for net in snap.nets.iter().filter(|net| net.up).take(3) {
+        text(
+            &painter,
+            pos2(content.left(), y),
+            Align2::LEFT_TOP,
+            format::truncate(&pretty(&net.name), (content.width() / 6.4) as usize),
+            10.5,
+            theme.text,
+        );
+        y += 18.0;
+        let detail = if net.ipv4.is_empty() {
+            format!("{} · 未获取到 IPv4", link_speed(net.link_bits))
+        } else {
+            format!("{} · {}", link_speed(net.link_bits), net.ipv4)
+        };
+        text(&painter, pos2(content.left() + 8.0, y), Align2::LEFT_TOP, detail, 9.5, theme.dim);
+        y += 22.0;
+    }
+
+    match &snap.wifi {
+        Some(wifi) => {
+            let label = format!(
+                "{} · 信号 {}% · {} · ↓{} ↑{}",
+                wifi.ssid,
+                wifi.signal,
+                wifi.phy,
+                rate_from_kbps(wifi.rx_kbps),
+                rate_from_kbps(wifi.tx_kbps)
+            );
+            text(
+                &painter,
+                pos2(content.left(), y + 4.0),
+                Align2::LEFT_TOP,
+                format::truncate(&label, (content.width() / 6.2) as usize),
+                10.0,
+                theme.net,
+            );
+        }
+        None => {
+            if snap.nets.iter().any(|net| net.name.contains("Wi-Fi") || net.name.contains("WLAN")) {
+                text(
+                    &painter,
+                    pos2(content.left(), y + 4.0),
+                    Align2::LEFT_TOP,
+                    "Wi-Fi 详情需要定位权限（设置 → 隐私和安全性 → 定位）",
+                    9.0,
+                    theme.faint,
+                );
+            }
+        }
+    }
+}
+
+fn info_row(painter: &Painter, content: Rect, y: f32, theme: &Theme, label: &str, value: &str) {
+    text(painter, pos2(content.left(), y), Align2::LEFT_TOP, label, 9.5, theme.faint);
+    text(
+        painter,
+        pos2(content.right(), y),
+        Align2::RIGHT_TOP,
+        format::truncate(value, (content.width() / 12.0) as usize),
+        11.0,
+        theme.text,
+    );
+}
+
+fn link_speed(bits_per_sec: u64) -> String {
+    if bits_per_sec >= 1_000_000_000 {
+        format!("{:.1} Gbps", bits_per_sec as f64 / 1e9)
+    } else if bits_per_sec >= 1_000_000 {
+        format!("{:.0} Mbps", bits_per_sec as f64 / 1e6)
+    } else {
+        "—".to_string()
+    }
+}
+
+fn rate_from_kbps(kbps: u32) -> String {
+    if kbps >= 1000 {
+        format!("{:.0} Mbps", kbps as f64 / 1000.0)
+    } else {
+        format!("{kbps} Kbps")
+    }
 }

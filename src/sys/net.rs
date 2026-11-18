@@ -11,6 +11,56 @@ use std::time::{Duration, Instant};
 use super::ffi;
 use super::from_ansi;
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct IpAddrRow {
+    address: u32,
+    index: u32,
+    mask: u32,
+    broadcast: u32,
+    reasm_size: u32,
+    unused: u16,
+    kind: u16,
+}
+
+/// IPv4 address per interface index, via the legacy `GetIpAddrTable`.
+pub fn ipv4_table() -> Vec<(u32, String)> {
+    let mut size: u32 = 0;
+    unsafe { ffi::GetIpAddrTable(core::ptr::null_mut(), &mut size, 1) };
+    if size == 0 {
+        return Vec::new();
+    }
+    let mut buffer = vec![0u8; size as usize + 1024];
+    let mut actual = buffer.len() as u32;
+    let status = unsafe { ffi::GetIpAddrTable(buffer.as_mut_ptr().cast(), &mut actual, 1) };
+    if status != 0 {
+        return Vec::new();
+    }
+
+    let count = u32::from_ne_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+    let row_size = core::mem::size_of::<IpAddrRow>();
+    let mut result = Vec::with_capacity(count);
+    for index in 0..count {
+        let offset = 4 + index * row_size;
+        if offset + row_size > buffer.len() {
+            break;
+        }
+        let row = unsafe {
+            (buffer.as_ptr().add(offset) as *const IpAddrRow).read_unaligned()
+        };
+        // Network byte order in memory; `to_ne_bytes` gives the dotted quads back.
+        let octets = row.address.to_ne_bytes();
+        if octets == [0, 0, 0, 0] || octets[0] == 127 {
+            continue;
+        }
+        result.push((
+            row.index,
+            format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3]),
+        ));
+    }
+    result
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Interface {
     pub index: u32,
@@ -20,6 +70,7 @@ pub struct Interface {
     pub up: bool,
     pub rx_bytes: u32,
     pub tx_bytes: u32,
+    pub ipv4: String,
 }
 
 /// Cached interface list plus the counters of the most recent poll.
@@ -107,6 +158,7 @@ pub fn interfaces(scratch: &mut Vec<u8>) -> Vec<Interface> {
     let capacity = (actual as usize).saturating_sub(header) / stride;
     let rows = (rows as usize).min(capacity);
 
+    let addresses = ipv4_table();
     let mut result = Vec::with_capacity(rows);
     for index in 0..rows {
         let offset = header + index * stride;
@@ -142,6 +194,11 @@ pub fn interfaces(scratch: &mut Vec<u8>) -> Vec<Interface> {
             up,
             rx_bytes: row.dwInOctets,
             tx_bytes: row.dwOutOctets,
+            ipv4: addresses
+                .iter()
+                .find(|(index, _)| *index == row.dwIndex)
+                .map(|(_, address)| address.clone())
+                .unwrap_or_default(),
         });
     }
     result

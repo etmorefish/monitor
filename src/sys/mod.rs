@@ -7,6 +7,7 @@
 pub mod cpu;
 pub mod disk;
 pub mod ffi;
+pub mod hardware;
 pub mod host;
 pub mod mem;
 pub mod net;
@@ -14,6 +15,7 @@ pub mod pdh;
 pub mod registry;
 pub mod power;
 pub mod sel;
+pub mod wlan;
 
 /// NUL-terminated UTF-16, the form every `*W` API expects.
 pub(crate) fn wide(value: &str) -> Vec<u16> {

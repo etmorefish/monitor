@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::sys;
@@ -145,6 +146,7 @@ pub struct Cpu {
 pub struct Net {
     pub name: String,
     pub up: bool,
+    pub ipv4: String,
     pub link_bits: u64,
     pub rx_bps: f64,
     pub tx_bps: f64,
@@ -173,6 +175,9 @@ pub struct Snapshot {
     pub zones: Vec<sys::pdh::Zone>,
     pub fans: Vec<Fan>,
     pub power: Option<sys::power::Power>,
+    /// Static inventory, shared rather than cloned every tick.
+    pub hardware: Arc<sys::hardware::Hardware>,
+    pub wifi: Option<sys::wlan::Wifi>,
     pub self_private: u64,
     pub self_cpu: f32,
     pub tick_us: u64,
@@ -211,6 +216,10 @@ pub struct Sampler {
     volumes: Vec<sys::disk::Volume>,
     volumes_at: Instant,
     prev_self: Option<(u64, Instant)>,
+    hardware: Arc<sys::hardware::Hardware>,
+    wlan: Option<sys::wlan::Wlan>,
+    wifi: Option<sys::wlan::Wifi>,
+    wifi_at: Instant,
     self_cpu_ema: Option<f32>,
     fan_path: Option<PathBuf>,
     fans: Vec<Fan>,
@@ -243,6 +252,10 @@ impl Sampler {
             volumes: Vec::new(),
             volumes_at: Instant::now() - Duration::from_secs(60),
             prev_self: None,
+            hardware: Arc::new(sys::hardware::load()),
+            wlan: sys::wlan::Wlan::open(),
+            wifi: None,
+            wifi_at: Instant::now() - Duration::from_secs(60),
             self_cpu_ema: None,
             fan_path,
             fans: Vec::new(),
@@ -357,6 +370,13 @@ impl Sampler {
                 self.zones = query.sample();
             }
         }
+        // Wi-Fi state changes slowly and each query is a local IPC call.
+        if self.wifi_at.elapsed() >= Duration::from_secs(5) {
+            self.wifi_at = Instant::now();
+            if let Some(wlan) = self.wlan.as_ref() {
+                self.wifi = wlan.current();
+            }
+        }
         if self.volumes_at.elapsed() >= Duration::from_secs(5) {
             self.volumes_at = Instant::now();
             self.volumes = sys::disk::volumes();
@@ -409,6 +429,8 @@ impl Sampler {
             zones: self.zones.clone(),
             fans: self.fans.clone(),
             power: sys::power::read(),
+            hardware: self.hardware.clone(),
+            wifi: self.wifi.clone(),
             self_private: sys::sel::private_bytes(),
             self_cpu,
             tick_us: 0,
@@ -460,6 +482,7 @@ impl Sampler {
             result.push(Net {
                 name: row.name.clone(),
                 up: row.up,
+                ipv4: row.ipv4.clone(),
                 link_bits: row.link_bits_per_sec,
                 rx_bps,
                 tx_bps,

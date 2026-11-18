@@ -104,6 +104,8 @@ pub fn json(snapshot: &Snapshot, host: &str) -> String {
         out.push_str("\"up\":");
         out.push_str(if net.up { "true" } else { "false" });
         out.push(',');
+        string_field(&mut out, "ipv4", &net.ipv4);
+        out.push(',');
         int_field(&mut out, "link_bits_per_sec", net.link_bits);
         out.push(',');
         number_field(&mut out, "rx_bytes_per_sec", net.rx_bps);
@@ -159,6 +161,73 @@ pub fn json(snapshot: &Snapshot, host: &str) -> String {
             out.push('}');
         }
         _ => out.push_str("null"),
+    }
+
+    // Hardware inventory
+    let hardware = &snapshot.hardware;
+    out.push_str(",\"hardware\":{");
+    string_field(&mut out, "board", &format!("{} {}", hardware.board_vendor, hardware.board_product));
+    out.push(',');
+    string_field(&mut out, "board_version", &hardware.board_version);
+    out.push(',');
+    string_field(&mut out, "bios", &format!("{} {}", hardware.bios_vendor, hardware.bios_version));
+    out.push(',');
+    string_field(&mut out, "bios_date", &hardware.bios_date);
+    out.push(',');
+    int_field(&mut out, "memory_total_bytes", hardware.memory_total());
+    out.push(',');
+    int_field(&mut out, "memory_slots_total", hardware.slots_total as u64);
+    out.push(',');
+    int_field(&mut out, "memory_slots_used", hardware.slots_used() as u64);
+    out.push_str(",\"disks\":[");
+    for (index, disk) in hardware.disks.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('"');
+        escape_into(&mut out, disk);
+        out.push('"');
+    }
+    out.push_str("],\"memory_modules\":[");
+    for (index, module) in hardware.modules.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('{');
+        string_field(&mut out, "slot", &module.slot);
+        out.push(',');
+        int_field(&mut out, "size_bytes", module.size_bytes);
+        out.push(',');
+        int_field(&mut out, "speed_mts", module.speed_mts as u64);
+        out.push(',');
+        string_field(&mut out, "kind", &module.kind);
+        out.push(',');
+        string_field(&mut out, "manufacturer", &module.manufacturer);
+        out.push(',');
+        string_field(&mut out, "part", &module.part);
+        out.push('}');
+    }
+    out.push_str("]}");
+
+    // Wi-Fi (may be unavailable without location permission)
+    out.push_str(",\"wifi\":");
+    match &snapshot.wifi {
+        Some(wifi) => {
+            out.push('{');
+            string_field(&mut out, "adapter", &wifi.adapter);
+            out.push(',');
+            string_field(&mut out, "ssid", &wifi.ssid);
+            out.push(',');
+            int_field(&mut out, "signal", wifi.signal as u64);
+            out.push(',');
+            int_field(&mut out, "rx_kbps", wifi.rx_kbps as u64);
+            out.push(',');
+            int_field(&mut out, "tx_kbps", wifi.tx_kbps as u64);
+            out.push(',');
+            string_field(&mut out, "phy", &wifi.phy);
+            out.push('}');
+        }
+        None => out.push_str("null"),
     }
 
     out.push_str(",\"self\":{");

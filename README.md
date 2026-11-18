@@ -138,6 +138,7 @@ cargo build --release --features gui     # 额外产出 target\release\minitor-g
 minitor-gui                              # 打开仪表盘（默认跟随 Windows 深浅色）
 minitor-gui --dark                       # 强制深色（--light 强制浅色）
 minitor-gui --lean                       # 不读温度与磁盘速率（同 TUI 的语义）
+minitor-gui --hardware                   # 直接打开硬件页
 ```
 
 单进程、无 WebView、无 Node 工具链的 egui 窗口，六块卡片铺满整个窗口：
@@ -148,6 +149,8 @@ minitor-gui --lean                       # 不读温度与磁盘速率（同 TUI
 - **网络**：下行/上行双曲线 + 每个接口的实时速率与累计流量
 - **散热**：温度曲线（30–100 °C 自适应刻度）+ 风扇 + 电池
 - **页脚**：程序自身的内存、CPU、采样耗时与帧率
+
+顶部还有两个页面：`总览`（上面这些卡片）和 `硬件`（主板/BIOS、内存条、磁盘型号、网卡与 IPv4，数据来自 SMBIOS 固件表、存储设备描述和注册表，免管理员）。
 
 几条一期优化后的细节：
 
@@ -163,6 +166,7 @@ minitor-gui --lean                       # 不读温度与磁盘速率（同 TUI
 
 | 操作 | 效果 |
 | --- | --- |
+| 顶部 `总览` / `硬件` | 切换监控页与硬件明细页 |
 | 悬停任意图表 | 十字线 + 时间与数值气泡 |
 | 点图例（读/写、下行/上行） | 临时隐藏该曲线 |
 | 右上角 `范围` | 1 / 5 / 15 分钟窗口 |
@@ -264,6 +268,7 @@ src/
 - 网络按接口描述去重，同名虚拟网卡会被合并；`WAN Miniport`、`Teredo`、`ISATAP` 等伪接口已过滤。
 - 卷容量与温度是 5 秒粒度（CPU/内存/网络/磁盘速率仍是 1 秒）。
 - 不用 `--lean` 时代码会加载 Windows 性能计数器子系统（PDH），这会带来约 5 MB 私有内存和 0.25 秒启动开销——温度和磁盘设备级速率都依赖它。想更省就用 `--lean`。
+- **Wi-Fi 的 SSID 与信号强度受 Windows「定位」权限限制**：未授权时 `WlanQueryInterface` 返回错误 5。minitor 会在硬件页提示"需要定位权限"，IPv4 与链路速率不受影响（走 `GetIpAddrTable` / `GetIfTable`）。
 
 ## 前端外壳选型
 
