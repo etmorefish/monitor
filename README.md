@@ -1,9 +1,9 @@
-# minitor
+# monitor
 
 极低开销的 Windows 资源监控：**CPU、内存、磁盘、网络、温度、风扇、电池**。两种外壳任选——终端界面（383 KB，零依赖）或图形界面（可选 egui，图表 + 交互）。
 
 ```
- minitor  L-NVC-301597  运行 1天20时31分                                                      2026-11-18 11:26:03
+ monitor  L-NVC-301597  运行 1天20时31分                                                      2026-11-18 11:26:03
 ────────────────────────────────────────────────────────────────────────────────────────────────────────
  CPU  Intel(R) Core(TM) Ultra 7 155H  16C/22T  1.15 GHz                                              2.4%
       █▉░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░                            ▁
@@ -38,7 +38,7 @@
 想自己复现：
 
 ```powershell
-minitor --bench        # 逐项采集器耗时 + 稳态 CPU + 内存
+monitor --bench        # 逐项采集器耗时 + 稳态 CPU + 内存
 ```
 
 ## 为什么能做到这么低
@@ -73,14 +73,14 @@ minitor --bench        # 逐项采集器耗时 + 稳态 CPU + 内存
 需要 Rust 1.75+（开发用 1.98）。仓库内**没有任何依赖**，所以 `cargo build` 不需要联网：
 
 ```powershell
-cargo build --release          # 产物: target\release\minitor.exe (383 KB)
+cargo build --release          # 产物: target\release\monitor.exe (383 KB)
 cargo test                     # 45 个测试：接口读数、布局宽度、JSON、CSV 解析…
 ```
 
 想放到 PATH 里随时用：
 
 ```powershell
-Copy-Item target\release\minitor.exe "$env:LOCALAPPDATA\Microsoft\WindowsApps\minitor.exe"
+Copy-Item target\release\monitor.exe "$env:LOCALAPPDATA\Microsoft\WindowsApps\monitor.exe"
 ```
 
 （`WindowsApps` 已在用户 PATH 中。也可以复制到任意自建目录并加入 PATH。）
@@ -88,15 +88,15 @@ Copy-Item target\release\minitor.exe "$env:LOCALAPPDATA\Microsoft\WindowsApps\mi
 ## 用法
 
 ```powershell
-minitor                    # 打开监控界面，1 秒刷新
-minitor -i 0.5             # 0.5 秒刷新（0.1 – 60 秒）
-minitor --once             # 打印一次快照后退出
-minitor --json             # 输出一次 JSON
-minitor --mini             # 输出一行精简状态
-minitor -w 5               # 无界面模式，每 5 秒一行，适合写日志
-minitor --log perf.csv     # 同时把每次采样追加成 CSV
-minitor --lean             # 极简模式：不读温度和磁盘速率（内存 1.9 MB）
-minitor --help             # 全部选项
+monitor                    # 打开监控界面，1 秒刷新
+monitor -i 0.5             # 0.5 秒刷新（0.1 – 60 秒）
+monitor --once             # 打印一次快照后退出
+monitor --json             # 输出一次 JSON
+monitor --mini             # 输出一行精简状态
+monitor -w 5               # 无界面模式，每 5 秒一行，适合写日志
+monitor --log perf.csv     # 同时把每次采样追加成 CSV
+monitor --lean             # 极简模式：不读温度和磁盘速率（内存 1.9 MB）
+monitor --help             # 全部选项
 ```
 
 ### 界面快捷键
@@ -116,15 +116,15 @@ minitor --help             # 全部选项
 
 ```powershell
 # 一行式状态栏
-minitor --mini
+monitor --mini
 # CPU   7.0% │ 内存  67.8% 21.4 GB │ C: 74% │ ↓1.9 KB/s ↑697 B/s │ 95°C │ 电池 75%
 
 # 取单个字段（无需 jq）
-(minitor --json | ConvertFrom-Json).cpu.usage_percent
-(minitor --json | ConvertFrom-Json).thermal.zones[0].celsius
+(monitor --json | ConvertFrom-Json).cpu.usage_percent
+(monitor --json | ConvertFrom-Json).thermal.zones[0].celsius
 
 # 采样入库
-minitor --log C:\logs\perf.csv -w 10
+monitor --log C:\logs\perf.csv -w 10
 ```
 
 JSON 结构固定，包含 `cpu` / `memory` / `disks` / `disk_io` / `network` / `thermal` / `power` / `self` 八段；CSV 每次采样一行，带表头，可直接被 Excel 或 pandas 读取。
@@ -134,11 +134,11 @@ JSON 结构固定，包含 `cpu` / `memory` / `disks` / `disk_io` / `network` / 
 ![深色仪表盘](docs/gui-dark.png)
 
 ```powershell
-cargo build --release --features gui     # 额外产出 target\release\minitor-gui.exe
-minitor-gui                              # 打开仪表盘（默认跟随 Windows 深浅色）
-minitor-gui --dark                       # 强制深色（--light 强制浅色）
-minitor-gui --lean                       # 不读温度与磁盘速率（同 TUI 的语义）
-minitor-gui --hardware                   # 直接打开硬件页
+cargo build --release --features gui     # 额外产出 target\release\monitor-gui.exe
+monitor-gui                              # 打开仪表盘（默认跟随 Windows 深浅色）
+monitor-gui --dark                       # 强制深色（--light 强制浅色）
+monitor-gui --lean                       # 不读温度与磁盘速率（同 TUI 的语义）
+monitor-gui --hardware                   # 直接打开硬件页
 ```
 
 单进程、无 WebView、无 Node 工具链的 egui 窗口，六块卡片铺满整个窗口：
@@ -202,7 +202,7 @@ Windows 普通用户态**读不到风扇转速**，这不是本程序偷懒：
 - 本机（Lenovo ThinkBook 21LU003GCD）的 `Win32_Fan` 类**没有任何实例**，`root\WMI` 下也没有 Lenovo 命名空间——固件确实没把风扇暴露给系统。
 - 任何能显示风扇转速的 Windows 工具（LibreHardwareMonitor、HWiNFO、AIDA64）都**自带并加载一个内核驱动**，且需要管理员权限。这个驱动是签名内核模块，不可能、也不应该塞进一个 383 KB 的普通程序里。
 
-所以 minitor 的做法是：
+所以 monitor 的做法是：
 
 1. **温度**：直接从 ACPI 热区读，不需要管理员、不需要驱动，开箱即用（默认开）。
 2. **风扇**：显示 `—` 并注明「固件未暴露」；如果你有别的工具已经在读风扇，用 `--fan-file` 把数值接进来。
@@ -218,10 +218,10 @@ CPU Fan, 2450
 ```
 
 ```powershell
-minitor --fan-file C:\Users\me\fans.txt
+monitor --fan-file C:\Users\me\fans.txt
 ```
 
-界面上就会显示 `风扇 2450 RPM  1820 RPM`，JSON 里也会出现 `thermal.fans`。如果你用 LibreHardwareMonitor 的 Web 服务，可以让一个几分钟一次的 PowerShell 任务把 JSON 里的转速写成这个文件，minitor 本身依然保持零驱动、零管理员、零常驻进程。
+界面上就会显示 `风扇 2450 RPM  1820 RPM`，JSON 里也会出现 `thermal.fans`。如果你用 LibreHardwareMonitor 的 Web 服务，可以让一个几分钟一次的 PowerShell 任务把 JSON 里的转速写成这个文件，monitor 本身依然保持零驱动、零管理员、零常驻进程。
 
 ## 架构
 
@@ -270,13 +270,13 @@ src/
 - 网络按接口描述去重，同名虚拟网卡会被合并；`WAN Miniport`、`Teredo`、`ISATAP` 等伪接口已过滤。
 - 卷容量与温度是 5 秒粒度（CPU/内存/网络/磁盘速率仍是 1 秒）。
 - 不用 `--lean` 时代码会加载 Windows 性能计数器子系统（PDH），这会带来约 5 MB 私有内存和 0.25 秒启动开销——温度和磁盘设备级速率都依赖它。想更省就用 `--lean`。
-- **Wi-Fi 的 SSID 与信号强度受 Windows「定位」权限限制**：未授权时 `WlanQueryInterface` 返回错误 5。minitor 会在硬件页提示"需要定位权限"，IPv4 与链路速率不受影响（走 `GetIpAddrTable` / `GetIfTable`）。
+- **Wi-Fi 的 SSID 与信号强度受 Windows「定位」权限限制**：未授权时 `WlanQueryInterface` 返回错误 5。monitor 会在硬件页提示"需要定位权限"，IPv4 与链路速率不受影响（走 `GetIpAddrTable` / `GetIfTable`）。
 
 ## 前端外壳选型
 
 关于 **Tauri / Dioxus / egui / Leptos** 的对比、本机实测数据与最终结论，见 [docs/frontend-shell-analysis.md](docs/frontend-shell-analysis.md)。
 
-结论：选 **egui（eframe）**——四者里唯一单进程、无 WebView、无 Node 工具链的方案，与零依赖内核同构。已落地为上面的 `minitor-gui`。
+结论：选 **egui（eframe）**——四者里唯一单进程、无 WebView、无 Node 工具链的方案，与零依赖内核同构。已落地为上面的 `monitor-gui`。
 ## 许可
 
 MIT。

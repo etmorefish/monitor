@@ -610,7 +610,7 @@ mod tests {
 
     #[test]
     fn fan_file_parses() {
-        let path = std::env::temp_dir().join("minitor-fan-test.txt");
+        let path = std::env::temp_dir().join("monitor-fan-test.txt");
         std::fs::write(&path, "# comment\nCPU Fan, 2400\n系统风扇 1800\r\nbad line\n").unwrap();
         let fans = read_fan_file(&path);
         assert_eq!(fans.len(), 2);

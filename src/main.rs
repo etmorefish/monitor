@@ -1,11 +1,11 @@
-//! minitor — a Windows resource monitor built to be forgotten about.
+//! monitor — a Windows resource monitor built to be forgotten about.
 //!
 //! Sampling is a handful of syscalls per tick (~100 µs), the UI is a single
 //! UTF-16 frame written once per refresh, and the process keeps itself at
 //! below-normal priority. Typical steady state: a few MB of RSS and well under
 //! 0.1 % of one core.
 
-use minitor::{cli, format, metrics, output, sys, term, ui};
+use monitor::{cli, format, metrics, output, sys, term, ui};
 
 use std::process::ExitCode;
 use std::sync::mpsc::{channel, RecvTimeoutError};
@@ -17,8 +17,8 @@ fn main() -> ExitCode {
     let options = match cli::parse(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(message) => {
-            eprintln!("minitor: {message}");
-            eprintln!("试试 minitor --help");
+            eprintln!("monitor: {message}");
+            eprintln!("试试 monitor --help");
             return ExitCode::from(2);
         }
     };
@@ -28,7 +28,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if options.version {
-        println!("minitor {}", env!("CARGO_PKG_VERSION"));
+        println!("monitor {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
 
@@ -84,7 +84,7 @@ fn run_watch(options: &cli::Options, seconds: f64) -> ExitCode {
         Some(path) => match output::Logger::open(path, &sampler.model.host) {
             Ok(logger) => Some(logger),
             Err(error) => {
-                eprintln!("minitor: 无法写入日志 {}: {error}", path.display());
+                eprintln!("monitor: 无法写入日志 {}: {error}", path.display());
                 None
             }
         },
@@ -115,7 +115,7 @@ fn run_tui(options: &cli::Options) -> ExitCode {
         Some(path) => match output::Logger::open(path, "") {
             Ok(logger) => Some(logger),
             Err(error) => {
-                eprintln!("minitor: 无法写入日志 {}: {error}", path.display());
+                eprintln!("monitor: 无法写入日志 {}: {error}", path.display());
                 return ExitCode::from(1);
             }
         },
@@ -125,11 +125,11 @@ fn run_tui(options: &cli::Options) -> ExitCode {
     let mut terminal = match term::Terminal::enter() {
         Some(terminal) => terminal,
         None => {
-            eprintln!("minitor: 当前输出不是交互式控制台（可能被重定向或运行在无终端环境）。");
+            eprintln!("monitor: 当前输出不是交互式控制台（可能被重定向或运行在无终端环境）。");
             eprintln!("         请直接在本机终端里运行，或改用：");
-            eprintln!("           minitor --once     打印一次快照");
-            eprintln!("           minitor --json     输出一次 JSON");
-            eprintln!("           minitor -w 5       无界面持续输出");
+            eprintln!("           monitor --once     打印一次快照");
+            eprintln!("           monitor --json     输出一次 JSON");
+            eprintln!("           monitor -w 5       无界面持续输出");
             return ExitCode::from(1);
         }
     };
@@ -142,7 +142,7 @@ fn run_tui(options: &cli::Options) -> ExitCode {
     {
         let (width, height) = terminal.size();
         let lines = vec![ui::text::Line::from_text(
-            "  minitor  正在读取传感器…",
+            "  monitor  正在读取传感器…",
             ui::style::Style::fg(palette.dim),
         )];
         terminal.draw(&ui::serialize(&lines, width, height));
@@ -254,7 +254,7 @@ fn run_bench() -> ExitCode {
         format::bytes(sys::sel::private_bytes())
     );
 
-    println!("minitor 采集器耗时（每项 200 次）");
+    println!("monitor 采集器耗时（每项 200 次）");
     measure("GetSystemTimes (CPU 总量)", 200, || {
         sys::cpu::total();
     });

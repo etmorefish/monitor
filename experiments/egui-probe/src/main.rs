@@ -6,11 +6,11 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([520.0, 360.0])
             .with_position([300.0, 300.0])
-            .with_title("minitor egui probe"),
+            .with_title("monitor egui probe"),
         ..Default::default()
     };
     eframe::run_native(
-        "minitor egui probe",
+        "monitor egui probe",
         options,
         Box::new(|cc| {
             install_cjk_font(&cc.egui_ctx);
@@ -50,7 +50,7 @@ impl eframe::App for Probe {
         let ctx = ui.ctx().clone();
         let mode = mode();
         egui::Frame::central_panel(ui.style()).show(ui, |ui| {
-            ui.heading("minitor 外壳探针");
+            ui.heading("monitor 外壳探针");
             ui.label("CPU 12.4%   内存 66.5%   温度 95°C");
             if mode == "progress" {
                 ui.add(egui::ProgressBar::new(0.665).text("内存 21.0 / 31.5 GB"));

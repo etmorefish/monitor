@@ -1,5 +1,6 @@
 # Build output
 /target
+/target-sandbox
 
 # Local logs and captures
 *.csv
@@ -8,3 +9,4 @@
 
 # 实验项目的构建产物
 experiments/*/target
+/shots

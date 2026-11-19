@@ -1,4 +1,4 @@
-# 给 minitor 套前端壳：Tauri / Dioxus / egui / Leptos 选型分析
+# 给 monitor 套前端壳：Tauri / Dioxus / egui / Leptos 选型分析
 
 > 结论先行：**选 egui（eframe）**。它是四者里唯一"单进程、纯 Rust、无 WebView、无 Node 工具链"的方案，与现有零依赖内核同构；代价是约 **79 MB 内存 / 0.3–0.5 % 单核 / 4.3 MB exe**。
 > 如果后续更看重"网页级观感 + 托盘 + 安装包 + 未来跨平台"，再换 **Tauri 2**，但要接受 2–4 倍内存与一套 Web 构建链。Dioxus 桌面端与 Tauri 同属 WebView 重量级却更不成熟；Leptos 根本不是桌面壳，要窗口仍得套 Tauri。
@@ -20,7 +20,7 @@
 
 所以严格说：Tauri 是"壳"，egui 是"库 + 轻壳"，Dioxus 桌面端是"壳 + 框架"，Leptos 只是"网页那一层"。拿 Leptos 和 Tauri 比"内存"没有意义——Leptos 的内存取决于它被装进什么壳里。
 
-对 minitor 真正的问题是：
+对 monitor 真正的问题是：
 
 > 采样内核已经是一个 383 KB、6.8 MB 私有内存、0.2 % 单核的零依赖程序。
 > **外壳愿意为"好看"付多少代价？**
@@ -63,7 +63,7 @@
 
 稳定状态下的整套数据：
 
-| 指标 | minitor TUI（现状） | egui 探针（本机实测） | 倍数 |
+| 指标 | monitor TUI（现状） | egui 探针（本机实测） | 倍数 |
 | --- | --- | --- | --- |
 | 私有内存 | 6.8 MB | **78.6 MB** | 11.6× |
 | 工作集 | 15.4 MB | 92–107 MB | ~6× |
@@ -99,7 +99,7 @@
 
 **架构**：立即模式（每帧重建 UI），无保留控件树，无 JS，无 IPC，无子进程。eframe 负责 winit 窗口 + glow(OpenGL)/wgpu 渲染。
 
-**对 minitor 的意义**：
+**对 monitor 的意义**：
 - `Sampler`、`Model`、`Snapshot` 直接 `use`，零序列化、零拷贝（或在 Arc 后面共享）。TUI 和 GUI 复用同一套 `ui::style` 语义（颜色、阈值）。
 - 采样线程 + `Arc<Mutex<Arc<Snapshot>>>`，UI 每秒取一次；采样耗时 0.25–0.35 ms，不会卡帧。
 - 没有 Node、没有 pnpm、没有前端构建产物；`cargo build --release --features gui` 一步出包。
@@ -123,8 +123,8 @@
 
 **资源**（第三方口径 + 官方基线）：空项目空闲 50–100 MB，冷启 200–500 ms，exe ~3 MB；重负载峰值 690 MB 以上（Zenn）。
 
-**对 minitor 的两种接法**：
-- **贴近**：Tauri 的 Rust 侧直接 `use minitor_core`，UI 通过 command 拿快照。少一层 IPC，但 GUI 和采样同生共死。
+**对 monitor 的两种接法**：
+- **贴近**：Tauri 的 Rust 侧直接 `use monitor_core`，UI 通过 command 拿快照。少一层 IPC，但 GUI 和采样同生共死。
 - **解耦（推荐）**：内核继续提供 `--serve`（本地 HTTP + SSE/JSON），Tauri 只是客户端。GUI 崩溃/重载不影响采样；将来手机/局域网看板也能复用同一接口。
 
 **真正的优势**：
@@ -143,7 +143,7 @@
 
 **优点**：单语言全栈、组件模型顺手、热重载体验不错、以后想上移动端有路径。
 
-**对 minitor 的问题**：
+**对 monitor 的问题**：
 - 桌面端不会比 Tauri 省内存，却要承担 0.8 还在 alpha 的 API 波动（当前稳定 0.7.10）。
 - 生态与资料量远小于 Tauri（下载量 379 万 vs 4563 万，差一个数量级）。
 - 出了问题要穿透到 wry/WebView，排查成本和 Tauri 一样，但社区答案更少。
@@ -155,7 +155,7 @@
 
 **架构**：细粒度响应式的 Web 框架（CSR/SSR/hydration），编译成 WASM 或服务端渲染。**没有桌面窗口能力**；Tauri 官方文档里 Leptos 是"前端框架"的一个选项。
 
-**如果一定要用**：minitor 起一个本地 HTTP 服务，Leptos 编成 WASM 由浏览器加载。产物小（WASM 几百 KB）、开发体验好，但运行时仍然是浏览器标签页（80–150 MB 级别），并且需要 `trunk` + `wasm-bindgen` 工具链。
+**如果一定要用**：monitor 起一个本地 HTTP 服务，Leptos 编成 WASM 由浏览器加载。产物小（WASM 几百 KB）、开发体验好，但运行时仍然是浏览器标签页（80–150 MB 级别），并且需要 `trunk` + `wasm-bindgen` 工具链。
 
 **结论**：把它当"网页层"来选是合理的；当"前端壳"来选是错位的。就本项目而言，一个手写 HTML + 现有 JSON 接口的收益/成本比更高。
 
@@ -187,8 +187,8 @@
 ### 6.1 结构（增量改造，不动现有代码）
 
 ```
-minitor/
-├── Cargo.toml            # 增加 [features] gui + [[bin]] minitor-gui
+monitor/
+├── Cargo.toml            # 增加 [features] gui + [[bin]] monitor-gui
 ├── src/
 │   ├── lib.rs            # 新增：把 cli/metrics/ui/sys 暴露成库
 │   ├── main.rs           # 现有 TUI/CLI，保持不变（默认零依赖）
@@ -210,16 +210,16 @@ gui = ["dep:eframe"]
 eframe = { version = "0.37", optional = true, default-features = false, features = ["glow", "default_fonts"] }
 
 [[bin]]
-name = "minitor"
+name = "monitor"
 path = "src/main.rs"
 
 [[bin]]
-name = "minitor-gui"
+name = "monitor-gui"
 path = "src/gui/main.rs"
 required-features = ["gui"]
 ```
 
-这样 `cargo build --release` 仍然产出**零依赖的 383 KB TUI**；只有显式 `--features gui` 才会拉 eframe。想更彻底就拆 workspace（`minitor-core` / `minitor-cli` / `minitor-gui`），但对当前体量是过度设计。
+这样 `cargo build --release` 仍然产出**零依赖的 383 KB TUI**；只有显式 `--features gui` 才会拉 eframe。想更彻底就拆 workspace（`monitor-core` / `monitor-cli` / `monitor-gui`），但对当前体量是过度设计。
 
 ### 6.2 线程与数据流
 
@@ -312,7 +312,7 @@ required-features = ["gui"]
 
 ## 11. 落地结果（2026-11-18 已实现）
 
-探针之后，我按第 6 节的结构把 `minitor-gui` 真正做了出来（`cargo build --release --features gui`）。预估与实际的对照：
+探针之后，我按第 6 节的结构把 `monitor-gui` 真正做了出来（`cargo build --release --features gui`）。预估与实际的对照：
 
 | 指标 | 探针预估 | 实际仪表盘 |
 | --- | --- | --- |
@@ -335,4 +335,4 @@ required-features = ["gui"]
 - 用 `--light` 启动时，若把「已应用的主题」标志直接初始化为 `false`，首帧不会应用浅色控件样式，会出现「卡片浅色、按钮深色」的混合状态——必须让第一帧强制同步一次；
 - 图表坐标轴要按卡片高度动态决定网格数量，否则矮卡片里 y 轴刻度会叠在一起。
 
-报告里的架构建议被原样采用：核心库零依赖不变，`minitor-gui` 通过 library 直接读 `Sampler`/`Snapshot`，采样与渲染同进程，没有 IPC。
+报告里的架构建议被原样采用：核心库零依赖不变，`monitor-gui` 通过 library 直接读 `Sampler`/`Snapshot`，采样与渲染同进程，没有 IPC。

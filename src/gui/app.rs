@@ -13,6 +13,7 @@ use eframe::egui::{
 
 use super::chart::{self, LineChart, Series, Unit};
 use super::theme::Theme;
+use super::throttle::{self, MouseThrottle};
 use crate::format;
 use crate::metrics::{History, Sampler, Snapshot};
 
@@ -63,6 +64,7 @@ pub struct Dashboard {
     fps_since: Instant,
     fps: f32,
     frame_micros: u64,
+    mouse: MouseThrottle,
 }
 
 impl Dashboard {
@@ -109,6 +111,7 @@ impl Dashboard {
             fps_since: Instant::now(),
             fps: 0.0,
             frame_micros: 0,
+            mouse: MouseThrottle::new(),
         }
     }
 
@@ -146,7 +149,7 @@ impl Dashboard {
 
         let mut ui =
             ui.new_child(UiBuilder::new().max_rect(rect).layout(Layout::left_to_right(Align::Center)));
-        ui.label(RichText::new("minitor").size(19.0).strong().color(theme.accent));
+        ui.label(RichText::new("monitor").size(19.0).strong().color(theme.accent));
         ui.add_space(2.0);
         ui.label(RichText::new(&host).size(11.5).color(theme.dim));
         if !uptime.is_empty() {
@@ -266,14 +269,24 @@ impl Dashboard {
 }
 
 impl eframe::App for Dashboard {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // Cap hover-driven repaints: at most one pointer event per
+        // `egui_winit::MOVE_REPAINT_DELAY_MS` reaches egui, so a moving mouse
+        // cannot chain full frames (see src/gui/throttle.rs).
+        self.mouse.hook(ctx, raw_input);
+    }
+
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        // Frame pacing: `vsync: false` keeps the GL swap off the busy-waiting
+        // driver path; DwmFlush re-adds the vblank wait as a proper block.
+        throttle::wait_for_vblank();
+
         let frame_started = Instant::now();
         self.frames += 1;
         if self.fps_since.elapsed().as_secs_f32() >= 1.0 {
             self.fps = self.frames as f32 / self.fps_since.elapsed().as_secs_f32();
             self.frames = 0;
             self.fps_since = Instant::now();
-
         }
 
         let now = Instant::now();
@@ -454,7 +467,7 @@ fn cpu_card(
         pos2(content.left(), content.bottom() - 24.0),
         pos2(content.right(), content.bottom()),
     );
-    chart::core_bars(ui, core_rect, &snap.cpu.per_core, &snap.cpu.core_mhz, snap.cpu.base_mhz, theme, Id::unique("cpu-cores"));
+    chart::core_bars(ui, core_rect, content, &snap.cpu.per_core, &snap.cpu.core_mhz, snap.cpu.base_mhz, theme, Id::unique("cpu-cores"));
 }
 
 fn memory_card(ui: &mut Ui, rect: Rect, theme: &Theme, snap: &Snapshot) {

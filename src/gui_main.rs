@@ -9,11 +9,11 @@ use core::ffi::c_void;
 
 fn main() {
     std::panic::set_hook(Box::new(|info| {
-        show_error(&format!("minitor 遇到内部错误：\n{info}"));
+        show_error(&format!("monitor 遇到内部错误：\n{info}"));
     }));
 
-    if let Err(error) = minitor::gui::run() {
-        show_error(&format!("minitor 无法启动：\n{error}"));
+    if let Err(error) = monitor::gui::run() {
+        show_error(&format!("monitor 无法启动：\n{error}"));
     }
 }
 
@@ -33,7 +33,7 @@ fn show_error(message: &str) {
     }
 
     let text = wide(message);
-    let caption = wide("minitor");
+    let caption = wide("monitor");
     // 0x10 = MB_ICONERROR
     unsafe { MessageBoxW(core::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), 0x10) };
 }

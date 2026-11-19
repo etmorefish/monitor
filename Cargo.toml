@@ -1,24 +1,24 @@
 [package]
-name = "minitor"
+name = "monitor"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Null-dependency Windows resource monitor: CPU, memory, disk, network, thermals, fan, battery"
 license = "MIT"
 publish = false
-default-run = "minitor"
+default-run = "monitor"
 
 [features]
 default = []
 # The egui shell. Off by default so `cargo build --release` stays dependency-free.
-gui = ["dep:eframe"]
+gui = ["dep:eframe", "dep:egui-winit"]
 
 [[bin]]
-name = "minitor"
+name = "monitor"
 path = "src/main.rs"
 
 [[bin]]
-name = "minitor-gui"
+name = "monitor-gui"
 path = "src/gui_main.rs"
 required-features = ["gui"]
 
@@ -28,6 +28,14 @@ required-features = ["gui"]
 # background all day. `eframe` is optional and only compiled for the GUI shell.
 [dependencies]
 eframe = { version = "0.37", optional = true, default-features = false, features = ["glow", "default_fonts"] }
+# Named directly so the throttle can read `egui_winit::MOVE_REPAINT_DELAY_MS`
+# from the patched copy below; it is already in the graph via eframe.
+egui-winit = { version = "0.37", optional = true, default-features = false }
+
+# monitor patch: stop mouse motion from repainting at the input rate.
+# See vendor/egui-winit/VENDORED.md and docs/高帧率重绘问题.md.
+[patch.crates-io]
+egui-winit = { path = "vendor/egui-winit" }
 
 [profile.release]
 opt-level = 3

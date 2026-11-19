@@ -1,6 +1,6 @@
-//! minitor core: Windows sampling, formatting, terminal UI and output modes.
+//! monitor core: Windows sampling, formatting, terminal UI and output modes.
 //!
-//! The library exists so the optional egui shell (`minitor-gui`) can reuse the
+//! The library exists so the optional egui shell (`monitor-gui`) can reuse the
 //! exact same sampler and data model as the TUI. Building with default features
 //! keeps it dependency-free.
 

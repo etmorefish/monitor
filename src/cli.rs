@@ -140,19 +140,19 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Options, String>
 }
 
 pub const HELP: &str = "\
-minitor — 极低开销的 Windows 资源监控 (CPU / 内存 / 磁盘 / 网络 / 温度 / 风扇 / 电池)
+monitor — 极低开销的 Windows 资源监控 (CPU / 内存 / 磁盘 / 网络 / 温度 / 风扇 / 电池)
 
 用法:
-  minitor [选项]
+  monitor [选项]
 
 常用:
-  minitor                 打开监控界面 (每 1 秒刷新)
-  minitor -i 0.5          刷新间隔 0.5 秒 (可 0.1 – 60)
-  minitor --once          输出一次快照后退出
-  minitor --json          输出一次 JSON (给脚本/状态栏用)
-  minitor --mini          输出一行精简状态
-  minitor -w 5            无界面持续输出，每 5 秒一行
-  minitor --log perf.csv  同时把每次采样追加到 CSV
+  monitor                 打开监控界面 (每 1 秒刷新)
+  monitor -i 0.5          刷新间隔 0.5 秒 (可 0.1 – 60)
+  monitor --once          输出一次快照后退出
+  monitor --json          输出一次 JSON (给脚本/状态栏用)
+  monitor --mini          输出一行精简状态
+  monitor -w 5            无界面持续输出，每 5 秒一行
+  monitor --log perf.csv  同时把每次采样追加到 CSV
 
 选项:
   -i, --interval <秒>     界面刷新间隔，默认 1.0

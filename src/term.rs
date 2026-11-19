@@ -135,7 +135,7 @@ impl Terminal {
     /// one parked thread, so key handling adds no polling to the main loop.
     pub fn spawn_input(sender: Sender<u8>) {
         let _ = thread::Builder::new()
-            .name("minitor-keys".to_string())
+            .name("monitor-keys".to_string())
             .stack_size(32 * 1024)
             .spawn(move || {
                 let input = unsafe { ffi::GetStdHandle(ffi::STD_INPUT_HANDLE) };

@@ -5,7 +5,7 @@
 //! painter calls, so no plotting crate is pulled in.
 
 use eframe::egui::{
-    self, pos2, vec2, Align2, Color32, FontId, Id, Mesh, Painter, Pos2, Rect, RichText, Sense,
+    self, pos2, vec2, Align2, Color32, FontId, Id, Mesh, Painter, Pos2, Rect, Sense,
     Shape, Stroke, Ui,
 };
 
@@ -212,16 +212,11 @@ pub fn line_chart(ui: &mut Ui, rect: Rect, theme: &Theme, chart: &LineChart, id:
                 }
                 let offset = (count - 1 - index) as f32 * chart.interval as f32;
                 let title = clock(chart.now_secs, offset);
-                response.on_hover_ui_at_pointer(|ui| {
-                    ui.label(RichText::new(&title).strong().size(11.5).color(theme.text));
-                    for (label, value, color) in &rows {
-                        ui.label(
-                            RichText::new(format!("{label}  {value}"))
-                                .size(11.0)
-                                .color(*color),
-                        );
-                    }
-                });
+                // Painted inline instead of `on_hover_ui_at_pointer`: an egui
+                // tooltip renders one frame later and requests extra repaints
+                // while opening and moving, which would defeat the
+                // input-repaint throttle (docs/高帧率重绘问题.md).
+                readout(&painter, pointer, plot, theme, &title, &rows);
             }
         }
     }
@@ -303,6 +298,7 @@ pub fn hbar(painter: &Painter, rect: Rect, fraction: f32, color: Color32, track:
 pub fn core_bars(
     ui: &mut Ui,
     rect: Rect,
+    card: Rect,
     values: &[f32],
     frequencies: &[u32],
     base_mhz: u32,
@@ -341,25 +337,73 @@ pub fn core_bars(
             if let Some(value) = values.get(index) {
                 let usage = format!("{value:.0}%");
                 let usage_color = theme.load(*value);
-                let frequency = frequencies.get(index).copied().filter(|mhz| *mhz > 0);
                 let title = format!("核心 {index}");
-                response.on_hover_ui_at_pointer(|ui| {
-                    ui.label(RichText::new(&title).strong().size(11.5).color(theme.text));
-                    ui.label(
-                        RichText::new(format!("使用率  {usage}"))
-                            .size(11.0)
-                            .color(usage_color),
-                    );
-                    if let Some(mhz) = frequency {
-                        ui.label(
-                            RichText::new(format!("频率  {:.2} GHz", mhz as f32 / 1000.0))
-                                .size(11.0)
-                                .color(theme.dim),
-                        );
-                    }
-                });
+                let frequency = frequencies
+                    .get(index)
+                    .copied()
+                    .filter(|mhz| *mhz > 0)
+                    .map(|mhz| format!("{:.2} GHz", mhz as f32 / 1000.0));
+                let rows: Vec<(String, String, Color32)> = core::iter::once((
+                    "使用率".to_string(),
+                    usage,
+                    usage_color,
+                ))
+                .chain(frequency.map(|mhz| ("频率".to_string(), mhz, theme.dim)))
+                .collect();
+                // The bars' own painter is clipped to the 24 px strip, so the
+                // readout needs the card's clip rect, and its clamp must allow
+                // the box to sit above the bars.
+                let overlay = ui.painter_at(card);
+                readout(&overlay, pointer, card, theme, &title, &rows);
             }
         }
+    }
+}
+
+/// Hover readout painted directly on the card, near the pointer and clamped
+/// to `clamp`.
+fn readout(
+    painter: &Painter,
+    pointer: Pos2,
+    clamp: Rect,
+    theme: &Theme,
+    title: &str,
+    rows: &[(String, String, Color32)],
+) {
+    let title_font = FontId::proportional(11.5);
+    let row_font = FontId::proportional(11.0);
+    let pad = vec2(9.0, 6.0);
+    let gap = 3.0;
+
+    let title_galley = painter.layout_no_wrap(title.to_owned(), title_font.clone(), theme.text);
+    let mut size = title_galley.size() + vec2(0.0, gap);
+    let mut galleys = Vec::with_capacity(rows.len());
+    for (label, value, color) in rows {
+        let galley = painter.layout_no_wrap(format!("{label}  {value}"), row_font.clone(), *color);
+        size.x = size.x.max(galley.size().x);
+        size.y += galley.size().y + gap;
+        galleys.push(galley);
+    }
+    size += pad * 2.0;
+
+    let mut origin = pointer + vec2(12.0, 12.0);
+    origin.x = origin.x.min((clamp.right() - size.x).max(clamp.left()));
+    origin.y = origin.y.min((clamp.bottom() - size.y).max(clamp.top()));
+    let rect = Rect::from_min_size(origin, size);
+    painter.rect_filled(rect, egui::CornerRadius::same(6), theme.tooltip);
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(6),
+        Stroke::new(1.0, theme.border),
+        egui::StrokeKind::Inside,
+    );
+
+    let mut y = rect.top() + pad.y;
+    painter.galley(pos2(rect.left() + pad.x, y), title_galley, theme.text);
+    y += title_font.size + gap;
+    for galley in galleys {
+        painter.galley(pos2(rect.left() + pad.x, y), galley, theme.text);
+        y += row_font.size + gap;
     }
 }
 

@@ -1,4 +1,4 @@
-//! Hand-written bindings for the handful of Windows APIs `minitor` needs.
+//! Hand-written bindings for the handful of Windows APIs `monitor` needs.
 //!
 //! Written out instead of pulling in the `windows` crate: the monitor touches
 //! roughly twenty functions, and a dependency-free binary starts instantly,

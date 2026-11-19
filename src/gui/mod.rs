@@ -1,4 +1,4 @@
-//! The optional egui shell for minitor.
+//! The optional egui shell for monitor.
 //!
 //! Built only with `--features gui`, so the default binary stays dependency
 //! free. Sampling, formatting and the data model all come from the library.
@@ -7,6 +7,7 @@ pub mod app;
 pub mod font;
 pub mod chart;
 pub mod theme;
+pub mod throttle;
 
 use eframe::egui;
 
@@ -15,19 +16,22 @@ pub fn run() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1320.0, 830.0])
             .with_min_inner_size([1000.0, 660.0])
-            .with_title("minitor"),
-        // Written out explicitly because it matters: with vsync off, eframe
-        // renders unbounded whenever a repaint is pending, so an "idle"
-        // dashboard burns 20-40% of a core instead of 0.6%.
+            .with_title("monitor"),
+        // `vsync: false` on purpose, together with `throttle::wait_for_vblank`
+        // in `Dashboard::ui`: with vsync on, the Intel Arc OpenGL ICD busy-waits
+        // inside `SwapBuffers` (~16 ms of CPU per frame), so even 1 fps idle
+        // frames spin. DwmFlush re-adds the pacing as a proper kernel wait
+        // without the spin. Input is throttled separately, so there is no
+        // unbounded rendering (see docs/高帧率重绘问题.md).
         glow_options: eframe::egui_glow::GlowConfiguration {
-            vsync: true,
+            vsync: false,
             ..Default::default()
         },
         ..Default::default()
     };
 
     eframe::run_native(
-        "minitor",
+        "monitor",
         options,
         Box::new(|cc| {
             font::install(&cc.egui_ctx);

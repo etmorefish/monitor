@@ -34,7 +34,7 @@ pub fn render(model: &Model, width: usize, height: usize, palette: &Palette) -> 
 fn header(blocks: &mut Vec<(u8, Line)>, model: &Model, width: usize, palette: &Palette) {
     let snapshot = &model.snap;
     let mut line = Line::new();
-    line.push(" minitor", Style::bold(palette.accent));
+    line.push(" monitor", Style::bold(palette.accent));
     line.push("  ", Style::PLAIN);
     line.push(&snapshot_name(model, width), Style::fg(palette.dim));
 

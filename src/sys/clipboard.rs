@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn round_trips_text() {
-        let marker = "minitor-clipboard-test-中文";
+        let marker = "monitor-clipboard-test-中文";
         if !set_text(marker) {
             // A clipboard owned by another process can make this flaky; skip.
             return;
