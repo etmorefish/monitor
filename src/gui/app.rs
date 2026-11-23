@@ -16,6 +16,7 @@ use super::theme::Theme;
 use super::throttle::{self, MouseThrottle};
 use crate::format;
 use crate::metrics::{History, Sampler, Snapshot};
+use crate::sys::gpu::Gpu;
 
 const GAP: f32 = 12.0;
 const MARGIN: f32 = 16.0;
@@ -1091,6 +1092,132 @@ fn parse_clock(value: &str) -> u32 {
 }
 // --- hardware page ----------------------------------------------------------
 
+fn gpu_card(ui: &mut Ui, rect: Rect, theme: &Theme, gpus: &[Gpu]) {
+    let Some(first) = gpus.first() else {
+        return;
+    };
+    let subtitle = if gpus.len() > 1 {
+        format!("{} · +{}", pretty(&first.name), gpus.len() - 1)
+    } else {
+        pretty(&first.name)
+    };
+    let content = card(ui, rect, theme, "GPU", &subtitle, theme.accent);
+    let painter = ui.painter_at(content);
+    let mut y = content.top() + 2.0;
+
+    text(
+        &painter,
+        pos2(content.left(), y),
+        Align2::LEFT_TOP,
+        format!("{:.0}%", first.utilization),
+        28.0,
+        theme.load(first.utilization),
+    );
+    text(
+        &painter,
+        pos2(content.left() + 76.0, y + 22.0),
+        Align2::LEFT_TOP,
+        "利用率",
+        10.0,
+        theme.dim,
+    );
+    let bar = Rect::from_min_size(pos2(content.left(), y + 38.0), vec2(content.width(), 6.0));
+    chart::hbar(&painter, bar, first.utilization / 100.0, theme.load(first.utilization), theme.grid);
+    y += 54.0;
+
+    let (memory_label, memory_used, memory_limit) = if first.dedicated_limit > 0 {
+        ("专用显存", first.dedicated_used, first.dedicated_limit)
+    } else {
+        ("共享显存", first.shared_used, 0)
+    };
+    text(
+        &painter,
+        pos2(content.left(), y),
+        Align2::LEFT_TOP,
+        memory_label,
+        9.5,
+        theme.faint,
+    );
+    let memory_text = if memory_limit > 0 {
+        format!("{} / {}", format::bytes(memory_used), format::bytes(memory_limit))
+    } else {
+        format::bytes(memory_used)
+    };
+    text(
+        &painter,
+        pos2(content.right(), y),
+        Align2::RIGHT_TOP,
+        memory_text,
+        10.0,
+        theme.text,
+    );
+    if memory_limit > 0 {
+        let bar = Rect::from_min_size(pos2(content.left(), y + 18.0), vec2(content.width(), 5.0));
+        chart::hbar(
+            &painter,
+            bar,
+            (memory_used as f32 / memory_limit as f32).clamp(0.0, 1.0),
+            theme.memory,
+            theme.grid,
+        );
+    }
+    y += 34.0;
+
+    if first.dedicated_limit > 0 {
+        text(
+            &painter,
+            pos2(content.left(), y),
+            Align2::LEFT_TOP,
+            "共享显存",
+            9.5,
+            theme.faint,
+        );
+        text(
+            &painter,
+            pos2(content.right(), y),
+            Align2::RIGHT_TOP,
+            format::bytes(first.shared_used),
+            10.0,
+            theme.dim,
+        );
+        y += 28.0;
+    }
+
+    text(
+        &painter,
+        pos2(content.left(), y),
+        Align2::LEFT_TOP,
+        "引擎",
+        9.5,
+        theme.faint,
+    );
+    y += 18.0;
+    let mut x = content.left();
+    for engine in first.engines.iter().take(5) {
+        let label = format!("{} {:.0}%", engine.name, engine.utilization);
+        let color = if engine.utilization > 0.05 {
+            theme.load(engine.utilization)
+        } else {
+            theme.faint
+        };
+        let chip_rect = chip(&painter, pos2(x, y), &label, color, theme);
+        x = chip_rect.right() + 6.0;
+        if x >= content.right() - 20.0 {
+            break;
+        }
+    }
+    if gpus.len() > 1 {
+        text(
+            &painter,
+            pos2(content.left(), content.bottom() - 2.0),
+            Align2::LEFT_BOTTOM,
+            format!("+{} 个适配器", gpus.len() - 1),
+            9.0,
+            theme.faint,
+        );
+    }
+}
+
 fn hardware_page(
     ui: &mut Ui,
     body: Rect,
@@ -1100,14 +1227,29 @@ fn hardware_page(
 ) {
     let hardware = &snap.hardware;
     let gap = GAP;
-    let half = (body.width() - gap) * 0.5;
     let row_height = (body.height() - gap) * 0.5;
-    let top_left = Rect::from_min_size(body.min, vec2(half, row_height));
-    let top_right = Rect::from_min_size(pos2(body.left() + half + gap, body.top()), vec2(half, row_height));
-    let bottom_left = Rect::from_min_size(pos2(body.left(), body.top() + row_height + gap), vec2(half, row_height));
+    let has_gpu = !snap.gpus.is_empty();
+    let (top_left, top_mid, top_right) = if has_gpu {
+        let top = split_row(body.left(), body.top(), body.width(), row_height, &[1.0, 1.0, 1.0]);
+        (top[0], Some(top[1]), top[2])
+    } else {
+        let half = (body.width() - gap) * 0.5;
+        (
+            Rect::from_min_size(body.min, vec2(half, row_height)),
+            None,
+            Rect::from_min_size(
+                pos2(body.left() + half + gap, body.top()),
+                vec2(half, row_height),
+            ),
+        )
+    };
+    let bottom_left = Rect::from_min_size(
+        pos2(body.left(), body.top() + row_height + gap),
+        vec2((body.width() - gap) * 0.5, row_height),
+    );
     let bottom_right = Rect::from_min_size(
-        pos2(body.left() + half + gap, body.top() + row_height + gap),
-        vec2(half, row_height),
+        pos2(body.left() + (body.width() - gap) * 0.5 + gap, body.top() + row_height + gap),
+        vec2((body.width() - gap) * 0.5, row_height),
     );
 
     // Board + BIOS
@@ -1135,6 +1277,10 @@ fn hardware_page(
         9.0,
         theme.faint,
     );
+
+    if let Some(rect) = top_mid {
+        gpu_card(ui, rect, theme, &snap.gpus);
+    }
 
     // Memory modules
     let content = card(ui, top_right, theme, "内存", &format!("{} 条", hardware.modules.len()), theme.memory);

@@ -144,6 +144,41 @@ pub fn json(snapshot: &Snapshot, host: &str) -> String {
     }
     out.push_str("]}");
 
+    // GPU
+    out.push_str(",\"gpu\":[");
+    for (index, gpu) in snapshot.gpus.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('{');
+        string_field(&mut out, "name", &gpu.name);
+        out.push(',');
+        string_field(&mut out, "luid", &gpu.luid);
+        out.push(',');
+        number_field(&mut out, "utilization_percent", gpu.utilization as f64);
+        out.push(',');
+        int_field(&mut out, "dedicated_used_bytes", gpu.dedicated_used);
+        out.push(',');
+        int_field(&mut out, "dedicated_limit_bytes", gpu.dedicated_limit);
+        out.push(',');
+        int_field(&mut out, "shared_used_bytes", gpu.shared_used);
+        out.push(',');
+        int_field(&mut out, "total_committed_bytes", gpu.total_committed);
+        out.push_str(",\"engines\":[");
+        for (engine_index, engine) in gpu.engines.iter().enumerate() {
+            if engine_index > 0 {
+                out.push(',');
+            }
+            out.push('{');
+            string_field(&mut out, "name", &engine.name);
+            out.push(',');
+            number_field(&mut out, "utilization_percent", engine.utilization as f64);
+            out.push('}');
+        }
+        out.push_str("]}");
+    }
+    out.push(']');
+
     // Power
     out.push_str(",\"power\":");
     match snapshot.power {
@@ -488,6 +523,7 @@ mod tests {
         assert!(text.contains("\"disks\":["));
         assert!(text.contains("\"network\":["));
         assert!(text.contains("\"thermal\":{"));
+        assert!(text.contains("\"gpu\":["));
         assert!(text.contains("\"self\":{"));
         // Braces balance once string contents are ignored.
         let mut depth = 0i32;

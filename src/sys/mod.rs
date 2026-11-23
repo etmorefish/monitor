@@ -8,6 +8,7 @@ pub mod clipboard;
 pub mod cpu;
 pub mod disk;
 pub mod ffi;
+pub mod gpu;
 pub mod hardware;
 pub mod host;
 pub mod mem;

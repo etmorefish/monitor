@@ -27,6 +27,7 @@ pub fn render(model: &Model, width: usize, height: usize, palette: &Palette) -> 
     disk_section(&mut blocks, model, width, palette, compact);
     net_section(&mut blocks, model, width, palette, compact);
     thermal_section(&mut blocks, model, width, palette, compact);
+    gpu_section(&mut blocks, model, width, palette, compact);
     footer(&mut blocks, model, width, palette, compact);
 
     fit(blocks, width, height)
@@ -429,6 +430,59 @@ fn thermal_section(
     }
 
     blocks.push((0, line));
+}
+
+/// One compact line for the first GPU: name, utilisation and memory split.
+/// Hidden entirely when the machine has no GPU performance counters.
+fn gpu_section(
+    blocks: &mut Vec<(u8, Line)>,
+    model: &Model,
+    width: usize,
+    palette: &Palette,
+    compact: bool,
+) {
+    let Some(gpu) = model.snap.gpus.first() else {
+        return;
+    };
+    let mut line = Line::new();
+    label(&mut line, "GPU", Style::bold(palette.accent));
+    let name_width = if compact { 18 } else { 34 };
+    line.push(&clip_words(&gpu.name, name_width), Style::fg(palette.text));
+    line.push("  ", Style::PLAIN);
+    line.push(
+        &format!("{:>5.1}%", gpu.utilization),
+        Style::bold(palette.load(gpu.utilization)),
+    );
+    if !compact {
+        line.push("  专用 ", Style::fg(palette.faint));
+        if gpu.dedicated_limit > 0 {
+            line.push(
+                &format!(
+                    "{} / {}",
+                    format::bytes(gpu.dedicated_used),
+                    format::bytes(gpu.dedicated_limit)
+                ),
+                Style::fg(palette.dim),
+            );
+        } else {
+            line.push(&format::bytes(gpu.dedicated_used), Style::fg(palette.dim));
+        }
+        line.push("  共享 ", Style::fg(palette.faint));
+        line.push(&format::bytes(gpu.shared_used), Style::fg(palette.dim));
+    }
+    if let Some(engine) = gpu.engines.first() {
+        let text = format!("  {} {:.0}%", engine.name, engine.utilization);
+        push_fit(&mut line, &text, Style::fg(palette.faint), width);
+    }
+    if model.snap.gpus.len() > 1 {
+        push_fit(
+            &mut line,
+            &format!("  +{}", model.snap.gpus.len() - 1),
+            Style::fg(palette.faint),
+            width,
+        );
+    }
+    blocks.push((1, line));
 }
 
 fn push_fans(line: &mut Line, fans: &[Fan], palette: &Palette) {

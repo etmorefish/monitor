@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use crate::sys;
 use crate::sys::cpu::{CpuTimes, PerCpuBuffer};
+use crate::sys::gpu::{Gpu, GpuQuery};
 
 use crate::sys::pdh::{DiskQuery, ThermalQuery, Zone};
 
@@ -174,6 +175,7 @@ pub struct Snapshot {
     pub nets: Vec<Net>,
     pub zones: Vec<sys::pdh::Zone>,
     pub fans: Vec<Fan>,
+    pub gpus: Vec<Gpu>,
     pub power: Option<sys::power::Power>,
     /// Static inventory, shared rather than cloned every tick.
     pub hardware: Arc<sys::hardware::Hardware>,
@@ -210,6 +212,9 @@ pub struct Sampler {
     interfaces: sys::net::InterfaceSet,
     pdh_disk: Option<DiskQuery>,
     pdh_thermal: Option<ThermalQuery>,
+    gpu_query: Option<GpuQuery>,
+    gpu_at: Instant,
+    gpus: Vec<Gpu>,
     counters_enabled: bool,
     thermal_at: Instant,
     zones: Vec<Zone>,
@@ -246,6 +251,9 @@ impl Sampler {
             interfaces: sys::net::InterfaceSet::new(),
             pdh_disk: counters.then(DiskQuery::open).flatten(),
             pdh_thermal: counters.then(ThermalQuery::open).flatten(),
+            gpu_query: counters.then(GpuQuery::open).flatten(),
+            gpu_at: Instant::now() - Duration::from_secs(60),
+            gpus: Vec::new(),
             counters_enabled: counters,
             thermal_at: Instant::now() - Duration::from_secs(60),
             zones: Vec::new(),
@@ -370,6 +378,14 @@ impl Sampler {
                 self.zones = query.sample();
             }
         }
+        // GPU engine instances are numerous and change quickly; five seconds is
+        // enough for a graph and keeps the per-tick cost flat.
+        if self.gpu_at.elapsed() >= Duration::from_secs(5) {
+            self.gpu_at = Instant::now();
+            if let Some(query) = self.gpu_query.as_mut() {
+                self.gpus = query.sample();
+            }
+        }
         // Wi-Fi state changes slowly and each query is a local IPC call.
         if self.wifi_at.elapsed() >= Duration::from_secs(5) {
             self.wifi_at = Instant::now();
@@ -428,6 +444,7 @@ impl Sampler {
             nets,
             zones: self.zones.clone(),
             fans: self.fans.clone(),
+            gpus: self.gpus.clone(),
             power: sys::power::read(),
             hardware: self.hardware.clone(),
             wifi: self.wifi.clone(),

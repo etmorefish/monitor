@@ -774,6 +774,55 @@ fn cpu_card(grid: &mut Grid, rect: Rect, model: &Model, palette: &Palette) {
             &format::truncate(&stats, inner.w),
             pair(palette.dim, palette.card),
         );
+        y += 1;
+    }
+
+    if y < inner.y + inner.h {
+        if let Some(gpu) = model.snap.gpus.first() {
+            let memory = if gpu.dedicated_limit > 0 {
+                format!(
+                    "专用 {} / {}",
+                    format::bytes(gpu.dedicated_used),
+                    format::bytes(gpu.dedicated_limit)
+                )
+            } else {
+                format!("共享 {}", format::bytes(gpu.shared_used))
+            };
+            let utilization = format!("{:.0}%", gpu.utilization);
+            let fixed = 5
+                + text::display_width(&utilization)
+                + 1
+                + text::display_width(&memory)
+                + 2;
+            let name_width = inner.w.saturating_sub(fixed);
+            let mut x = inner.x;
+            advance(grid, "GPU", pair_bold(palette.accent, palette.card), &mut x, y);
+            advance(grid, "  ", pair(palette.text, palette.card), &mut x, y);
+            if name_width >= 6 {
+                advance(
+                    grid,
+                    &format::truncate(&gpu.name, name_width),
+                    pair(palette.text, palette.card),
+                    &mut x,
+                    y,
+                );
+                x += 1;
+            }
+            advance(
+                grid,
+                &utilization,
+                pair_bold(palette.load(gpu.utilization), palette.card),
+                &mut x,
+                y,
+            );
+            put_right(
+                grid,
+                inner.x + inner.w - 1,
+                y,
+                &memory,
+                pair(palette.dim, palette.card),
+            );
+        }
     }
 }
 

@@ -164,6 +164,25 @@ pub struct SYSTEMTIME {
     pub wMilliseconds: u16,
 }
 
+/// `DISPLAY_DEVICEW`; `EnumDisplayDevicesW` fills `DeviceString` with the
+/// adapter description and needs no COM or DXGI.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DISPLAY_DEVICEW {
+    pub cb: DWORD,
+    pub DeviceName: [u16; 32],
+    pub DeviceString: [u16; 128],
+    pub StateFlags: DWORD,
+    pub DeviceID: [u16; 128],
+    pub DeviceKey: [u16; 128],
+}
+
+impl Default for DISPLAY_DEVICEW {
+    fn default() -> Self {
+        unsafe { core::mem::zeroed() }
+    }
+}
+
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct COORD {
@@ -316,6 +335,16 @@ extern "system" {
     ) -> BOOL;
 
     pub fn GetLocalTime(time: *mut SYSTEMTIME);
+}
+
+#[link(name = "user32")]
+extern "system" {
+    pub fn EnumDisplayDevicesW(
+        device: PCWSTR,
+        dev_num: DWORD,
+        display_device: *mut DISPLAY_DEVICEW,
+        flags: DWORD,
+    ) -> BOOL;
 }
 
 #[link(name = "ntdll")]

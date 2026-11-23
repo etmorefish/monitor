@@ -3,7 +3,7 @@
 [![Release](https://img.shields.io/github/v/release/etmorefish/monitor?display_name=tag&sort=semver)](https://github.com/etmorefish/monitor/releases/latest)
 [![Release build](https://github.com/etmorefish/monitor/actions/workflows/release.yml/badge.svg)](https://github.com/etmorefish/monitor/actions/workflows/release.yml)
 
-极低开销的 Windows 资源监控：**CPU、内存、磁盘、网络、温度、风扇、电池**。默认是卡片式终端仪表盘（`--fancy`），可用 `--classic` 切回极简 TUI；另有可选图形界面（egui）。终端形态零依赖、单进程。
+极低开销的 Windows 资源监控：**CPU、内存、磁盘、网络、GPU、温度、风扇、电池**。默认是卡片式终端仪表盘（`--fancy`），可用 `--classic` 切回极简 TUI；另有可选图形界面（egui）。终端形态零依赖、单进程。
 
 ![默认卡片仪表盘](docs/tui-fancy.png)
 
@@ -47,7 +47,7 @@ monitor
 
 | 项目 | 极简模式 | `--lean` 极简模式 |
 | --- | --- | --- |
-| exe 体积 | 458 KB | 458 KB |
+| exe 体积 | 508 KB | 508 KB |
 | CPU（稳定运行） | **≈ 0.2 %（单个核心）** | < 0.05 % |
 | 私有内存 | 7.0–7.3 MB | 1.9 MB |
 | 工作集 | 15.4 MB | 9.0 MB |
@@ -84,6 +84,7 @@ monitor --bench        # 逐项采集器耗时 + 稳态 CPU + 内存
 | 卷容量（总/已用/剩余、卷标、文件系统） | `GetLogicalDriveStringsW` + `GetDiskFreeSpaceExW` + `GetVolumeInformationW` | 5 s |
 | 磁盘读/写速率 | PDH `\PhysicalDisk(_Total)\Disk {Read,Write} Bytes/sec` | 1 s |
 | 网络每接口速率与累计流量 | `GetIfTable`（枚举）+ `GetIfEntry`（轮询） | 1 s / 30 s |
+| GPU 利用率 / 引擎 / 显存 | PDH `\GPU Engine(*)\Utilization Percentage`、`\GPU Adapter Memory(*)\{Dedicated,Shared} Usage` | 5 s |
 | 温度 | PDH `\Thermal Zone Information(*)\High Precision Temperature`（ACPI 热区，单位 0.1 K） | 5 s |
 | 风扇转速 | `--fan-file` 外部桥接（见下） | 5 s |
 | 电池 / 交流供电 | `GetSystemPowerStatus` | 1 s |
@@ -96,8 +97,8 @@ monitor --bench        # 逐项采集器耗时 + 稳态 CPU + 内存
 需要 Rust 1.75+（开发用 1.98）。仓库内**没有任何依赖**，所以 `cargo build` 不需要联网：
 
 ```powershell
-cargo build --release          # 产物: target\release\monitor.exe (458 KB)
-cargo test                     # 63 个测试：接口读数、布局宽度、JSON、CSV、24-bit/256 色渲染…
+cargo build --release          # 产物: target\release\monitor.exe (508 KB)
+cargo test                     # 65 个测试：接口读数、布局宽度、JSON、CSV、GPU、24-bit/256 色渲染…
 ```
 
 想放到 PATH 里随时用：
@@ -165,7 +166,7 @@ monitor --mini
 monitor --log C:\logs\perf.csv -w 10
 ```
 
-JSON 结构固定，包含 `cpu` / `memory` / `disks` / `disk_io` / `network` / `thermal` / `power` / `self` 八段；CSV 每次采样一行，带表头，可直接被 Excel 或 pandas 读取。
+JSON 结构固定，包含 `cpu` / `memory` / `disks` / `disk_io` / `network` / `thermal` / `power` / `gpu` / `self` 九段；CSV 每次采样一行，带表头，可直接被 Excel 或 pandas 读取。
 
 ## 卡片仪表盘（默认）
 
@@ -204,7 +205,9 @@ monitor-gui --hardware                   # 直接打开硬件页
 - **散热**：温度曲线（30–100 °C 自适应刻度）+ 风扇 + 电池
 - **页脚**：程序自身的内存、CPU、采样耗时与帧率
 
-顶部还有两个页面：`总览`（上面这些卡片）和 `硬件`（主板/BIOS、内存条、磁盘型号、网卡与 IPv4，数据来自 SMBIOS 固件表、存储设备描述和注册表，免管理员）。
+顶部还有两个页面：`总览`（上面这些卡片）和 `硬件`（主板/BIOS、GPU 利用率/显存/引擎、内存条、磁盘型号、网卡与 IPv4，数据来自 SMBIOS 固件表、GPU 性能计数器、存储设备描述和注册表，免管理员）。
+
+![硬件页（含 GPU）](docs/gui-hardware.png)
 
 几条一期优化后的细节：
 
@@ -216,6 +219,7 @@ monitor-gui --hardware                   # 直接打开硬件页
 - CPU 卡片显示核数/线程数与 L1/L2/L3 缓存总量（与任务管理器一致）
 - **IPv4 地址可点击复制**（总览页与硬件页），复制后旁边短暂显示"已复制"
 - Wi-Fi 名称受系统定位权限限制时，硬件页给出"打开定位设置"按钮，直达 Windows 设置页
+- 硬件页新增 **GPU 卡片**：利用率、专用/共享显存、各引擎占用；没有 GPU 性能计数器的机器自动隐藏该卡
 - 头部显示**开机时长**，与 TUI 一致
 
 交互：
@@ -298,6 +302,7 @@ src/
     ├── mem.rs     物理内存、提交、缓存、进程线程数
     ├── disk.rs    卷容量
     ├── net.rs     接口枚举（30 s）+ 单接口轮询（1 s）
+    ├── gpu.rs     PDH GPU 引擎利用率 + 显存；EnumDisplayDevices 适配器名
     ├── pdh.rs     磁盘速率、ACPI 热区温度
     ├── power.rs   电池与交流状态
     ├── sel.rs     自身内存、CPU、优先级
@@ -315,7 +320,7 @@ src/
 
 ## 路线图
 
-二期计划（硬件明细、Wi-Fi 详情、GPU、进程管理、托盘自启）见 [docs/二期任务清单.md](docs/二期任务清单.md)，其中包含接口选型、验收标准与风险说明。
+二期计划（硬件明细、Wi-Fi 详情、GPU、进程管理、托盘自启）见 [docs/二期任务清单.md](docs/二期任务清单.md)，其中包含接口选型、验收标准与风险说明；**M1/M2/M3（GPU）已完成**，M4/M5 待做。
 
 ## 已知限制
 
@@ -326,6 +331,7 @@ src/
 - 卷容量与温度是 5 秒粒度（CPU/内存/网络/磁盘速率仍是 1 秒）。
 - 不用 `--lean` 时代码会加载 Windows 性能计数器子系统（PDH），这会带来约 5 MB 私有内存和 0.25 秒启动开销——温度和磁盘设备级速率都依赖它。想更省就用 `--lean`。
 - **Wi-Fi 的 SSID 与信号强度受 Windows「定位」权限限制**：未授权时 `WlanQueryInterface` 返回错误 5。monitor 会在硬件页提示"需要定位权限"，IPv4 与链路速率不受影响（走 `GetIpAddrTable` / `GetIfTable`）。
+- **GPU 数据来自 PDH 性能计数器**（Windows 10 1709+）；`--lean` 模式下不初始化 GPU 查询，TUI/GUI 的 GPU 区域隐藏。引擎利用率按 LUID 取各引擎最大值；GPU 适配器名在没有 DXGI 的情况下按显存用量顺序匹配 `EnumDisplayDevicesW`，多 GPU 且显存接近时可能张冠李戴。本机 Windows 11 26200 的 `Dedicated Limit` 计数器不存在，因此专用显存上限显示为未知，只显示已用量。
 - 默认卡片视图需要至少 **100×30** 的窗口；更小会自动回退极简视图，`--classic` 可始终使用极简 TUI。卡片背景会填充单元格，开启终端背景透明/亚克力时看不到壁纸。
 
 ## 前端外壳选型
