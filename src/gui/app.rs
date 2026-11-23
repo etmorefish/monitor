@@ -17,6 +17,7 @@ use super::throttle::{self, MouseThrottle};
 use crate::format;
 use crate::metrics::{History, Sampler, Snapshot};
 use crate::sys::gpu::Gpu;
+use crate::sys::process::{self, ProcessEntry, ProcessList, ProcessSampler};
 
 const GAP: f32 = 12.0;
 const MARGIN: f32 = 16.0;
@@ -27,6 +28,18 @@ const FOOTER_H: f32 = 26.0;
 enum Page {
     Overview,
     Hardware,
+    Processes,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProcessSort {
+    Cpu,
+    Memory,
+    Name,
+    Pid,
+    Age,
+    Threads,
+    Handles,
 }
 
 #[derive(Clone, Copy)]
@@ -61,6 +74,14 @@ pub struct Dashboard {
     applied_dark: bool,
     page: Page,
     copied: Option<(String, Instant)>,
+    process_sampler: ProcessSampler,
+    processes: ProcessList,
+    process_at: Instant,
+    process_search: String,
+    process_sort: ProcessSort,
+    process_ascending: bool,
+    process_confirm: Option<u32>,
+    process_message: Option<(String, bool)>,
     frames: u32,
     fps_since: Instant,
     fps: f32,
@@ -87,6 +108,11 @@ impl Dashboard {
         // Handy for screenshots and for opening straight on the details page.
         let page = if arguments.iter().any(|argument| argument == "--hardware") {
             Page::Hardware
+        } else if arguments
+            .iter()
+            .any(|argument| argument == "--processes" || argument == "--process")
+        {
+            Page::Processes
         } else {
             Page::Overview
         };
@@ -108,6 +134,14 @@ impl Dashboard {
             applied_dark: true,
             page,
             copied: None,
+            process_sampler: ProcessSampler::new(),
+            processes: ProcessList::default(),
+            process_at: Instant::now() - Duration::from_secs(10),
+            process_search: String::new(),
+            process_sort: ProcessSort::Cpu,
+            process_ascending: false,
+            process_confirm: None,
+            process_message: None,
             frames: 0,
             fps_since: Instant::now(),
             fps: 0.0,
@@ -161,7 +195,11 @@ impl Dashboard {
             ui.label(RichText::new("● 已暂停").size(10.5).color(theme.warn));
         }
         ui.add_space(14.0);
-        for (page, label) in [(Page::Overview, "总览"), (Page::Hardware, "硬件")] {
+        for (page, label) in [
+            (Page::Overview, "总览"),
+            (Page::Hardware, "硬件"),
+            (Page::Processes, "进程"),
+        ] {
             if ui.selectable_label(self.page == page, label).clicked() {
                 self.page = page;
             }
@@ -247,6 +285,254 @@ impl Dashboard {
         }
     }
 
+    fn process_page(&mut self, ui: &mut Ui, body: Rect, theme: &Theme) {
+        let total = self.processes.entries.len();
+        let subtitle = format!(
+            "{} 进程 · {} 线程 · 5s 刷新",
+            total, self.processes.total_threads
+        );
+        let content = card(ui, body, theme, "进程", &subtitle, theme.accent);
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .max_rect(content)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        child.spacing_mut().item_spacing = vec2(8.0, 4.0);
+
+        let mut refresh = false;
+        let mut sort_request: Option<(ProcessSort, bool)> = None;
+        child.horizontal(|ui| {
+            ui.label(RichText::new("搜索").size(10.0).color(theme.dim));
+            egui::Frame::new()
+                .fill(theme.bg)
+                .stroke(Stroke::new(1.0, theme.border))
+                .inner_margin(egui::Margin::symmetric(6, 2))
+                .corner_radius(6.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.process_search)
+                            .frame(egui::Frame::NONE)
+                            .hint_text("进程名 / PID")
+                            .desired_width(220.0)
+                            .font(FontId::proportional(12.0))
+                            .text_color(theme.text),
+                    );
+                });
+            if ui.button("刷新").clicked() {
+                refresh = true;
+            }
+            if let Some((message, ok)) = &self.process_message {
+                let color = if *ok { theme.ok } else { theme.bad };
+                ui.label(RichText::new(message).size(10.5).color(color));
+            }
+        });
+
+        let current_sort = self.process_sort;
+        let current_ascending = self.process_ascending;
+        let gap = 8.0;
+        let pid_w = 56.0;
+        let cpu_w = 64.0;
+        let mem_w = 86.0;
+        let age_w = 76.0;
+        let threads_w = 52.0;
+        let handles_w = 52.0;
+        let kill_w = 52.0;
+        let name_w = (content.width()
+            - pid_w
+            - cpu_w
+            - mem_w
+            - age_w
+            - threads_w
+            - handles_w
+            - kill_w
+            - gap * 8.0)
+            .max(120.0);
+
+        let mut header_cell = |ui: &mut Ui, label: &str, width: f32, sort: ProcessSort, right: bool| {
+            let active = current_sort == sort;
+            let arrow = if active {
+                if current_ascending {
+                    " ↑"
+                } else {
+                    " ↓"
+                }
+            } else {
+                ""
+            };
+            let color = if active { theme.accent } else { theme.dim };
+            if table_header(ui, width, &format!("{label}{arrow}"), color, right) {
+                let descending = sort != ProcessSort::Name;
+                sort_request = Some((
+                    sort,
+                    if active { !current_ascending } else { !descending },
+                ));
+            }
+        };
+        child.horizontal(|ui| {
+            header_cell(ui, "名称", name_w, ProcessSort::Name, false);
+            header_cell(ui, "PID", pid_w, ProcessSort::Pid, true);
+            header_cell(ui, "CPU", cpu_w, ProcessSort::Cpu, true);
+            header_cell(ui, "内存", mem_w, ProcessSort::Memory, true);
+            header_cell(ui, "启动", age_w, ProcessSort::Age, true);
+            header_cell(ui, "线程", threads_w, ProcessSort::Threads, true);
+            header_cell(ui, "句柄", handles_w, ProcessSort::Handles, true);
+            ui.add_space(kill_w);
+        });
+
+        let (sort, ascending) = sort_request.unwrap_or((current_sort, current_ascending));
+        let query = self.process_search.trim().to_lowercase();
+        let mut rows: Vec<&ProcessEntry> = self
+            .processes
+            .entries
+            .iter()
+            .filter(|entry| {
+                query.is_empty()
+                    || entry.name.to_lowercase().contains(&query)
+                    || entry.pid.to_string().contains(&query)
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            let order = match sort {
+                ProcessSort::Cpu => a.cpu_percent.total_cmp(&b.cpu_percent),
+                ProcessSort::Memory => a.private_bytes.cmp(&b.private_bytes),
+                ProcessSort::Name => a
+                    .name
+                    .to_lowercase()
+                    .cmp(&b.name.to_lowercase()),
+                ProcessSort::Pid => a.pid.cmp(&b.pid),
+                ProcessSort::Age => a.age_secs.cmp(&b.age_secs),
+                ProcessSort::Threads => a.threads.cmp(&b.threads),
+                ProcessSort::Handles => a.handles.cmp(&b.handles),
+            };
+            if ascending {
+                order
+            } else {
+                order.reverse()
+            }
+        });
+
+        child.label(
+            RichText::new(format!("显示 {} / {} 个进程", rows.len(), total))
+                .size(9.5)
+                .color(theme.faint),
+        );
+
+        let mut kill_request = None;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show_rows(&mut child, 22.0, rows.len(), |ui, range| {
+                for index in range {
+                    let entry = rows[index];
+                    ui.horizontal(|ui| {
+                        let name = format::truncate(&entry.name, (name_w / 6.4) as usize);
+                        table_text(ui, name_w, &name, 10.5, theme.text, false);
+                        table_text(ui, pid_w, &entry.pid.to_string(), 10.5, theme.dim, true);
+                        table_text(
+                            ui,
+                            cpu_w,
+                            &format!("{:.1}%", entry.cpu_percent),
+                            10.5,
+                            theme.load(entry.cpu_percent),
+                            true,
+                        );
+                        table_text(
+                            ui,
+                            mem_w,
+                            &format::bytes(entry.private_bytes),
+                            10.5,
+                            theme.dim,
+                            true,
+                        );
+                        table_text(
+                            ui,
+                            age_w,
+                            &format_age(entry.age_secs),
+                            10.5,
+                            theme.dim,
+                            true,
+                        );
+                        table_text(
+                            ui,
+                            threads_w,
+                            &entry.threads.to_string(),
+                            10.5,
+                            theme.faint,
+                            true,
+                        );
+                        table_text(
+                            ui,
+                            handles_w,
+                            &entry.handles.to_string(),
+                            10.5,
+                            theme.faint,
+                            true,
+                        );
+                        if ui
+                            .add_sized([kill_w, 20.0], egui::Button::new("结束").small())
+                            .clicked()
+                        {
+                            kill_request = Some(entry.pid);
+                        }
+                    });
+                }
+            });
+
+        if let Some((sort, ascending)) = sort_request {
+            self.process_sort = sort;
+            self.process_ascending = ascending;
+        }
+        if refresh {
+            self.processes = self.process_sampler.sample();
+            self.process_at = Instant::now();
+        }
+        if let Some(pid) = kill_request {
+            self.process_confirm = Some(pid);
+        }
+
+        if let Some(pid) = self.process_confirm {
+            let name = self
+                .processes
+                .entries
+                .iter()
+                .find(|entry| entry.pid == pid)
+                .map(|entry| entry.name.clone())
+                .unwrap_or_else(|| format!("PID {pid}"));
+            let mut confirm = false;
+            let mut cancel = false;
+            egui::Window::new("结束进程")
+                .id(Id::unique("monitor-kill-confirm"))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+                .show(ui.ctx(), |ui| {
+                    ui.label(format!("确定结束 {name}（PID {pid}）？"));
+                    ui.horizontal(|ui| {
+                        if ui.button("结束").clicked() {
+                            confirm = true;
+                        }
+                        if ui.button("取消").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if confirm {
+                match process::kill(pid) {
+                    Ok(()) => {
+                        self.process_message = Some((format!("已结束 {name}（PID {pid}）"), true));
+                        self.processes = self.process_sampler.sample();
+                        self.process_at = Instant::now();
+                    }
+                    Err(message) => {
+                        self.process_message = Some((format!("{name}：{message}"), false));
+                    }
+                }
+                self.process_confirm = None;
+            } else if cancel {
+                self.process_confirm = None;
+            }
+        }
+    }
+
     fn footer(&self, ui: &mut Ui, rect: Rect, theme: &Theme) {
         let snap = &self.sampler.model.snap;
         let painter = ui.painter_at(rect);
@@ -323,9 +609,14 @@ impl eframe::App for Dashboard {
             pos2(full.left() + MARGIN, full.top() + HEADER_H),
             pos2(full.right() - MARGIN, full.bottom() - FOOTER_H),
         );
+        if self.page == Page::Processes && self.process_at.elapsed() >= Duration::from_secs(5) {
+            self.processes = self.process_sampler.sample();
+            self.process_at = Instant::now();
+        }
         match self.page {
             Page::Overview => self.cards(ui, body, &theme),
             Page::Hardware => hardware_page(ui, body, &theme, &self.sampler.model.snap, &mut self.copied),
+            Page::Processes => self.process_page(ui, body, &theme),
         }
 
         let footer = Rect::from_min_size(
@@ -942,6 +1233,51 @@ fn thermal_card(
 }
 
 // --- helpers ----------------------------------------------------------------
+
+fn table_text(
+    ui: &mut Ui,
+    width: f32,
+    value: &str,
+    size: f32,
+    color: Color32,
+    right: bool,
+) {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 20.0), Sense::hover());
+    let (pos, anchor) = if right {
+        (pos2(rect.right() - 2.0, rect.center().y), Align2::RIGHT_CENTER)
+    } else {
+        (pos2(rect.left() + 2.0, rect.center().y), Align2::LEFT_CENTER)
+    };
+    ui.painter()
+        .text(pos, anchor, value, FontId::proportional(size), color);
+}
+
+fn table_header(ui: &mut Ui, width: f32, label: &str, color: Color32, right: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 20.0), Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(4), Theme::alpha(color, 16));
+    }
+    let (pos, anchor) = if right {
+        (pos2(rect.right() - 2.0, rect.center().y), Align2::RIGHT_CENTER)
+    } else {
+        (pos2(rect.left() + 2.0, rect.center().y), Align2::LEFT_CENTER)
+    };
+    ui.painter()
+        .text(pos, anchor, label, FontId::proportional(10.0), color);
+    response.clicked()
+}
+
+fn format_age(seconds: u64) -> String {
+    if seconds < 60 {
+        "刚刚".to_string()
+    } else if seconds < 3_600 {
+        format!("{}分", seconds / 60)
+    } else if seconds < 86_400 {
+        format!("{}时{}分", seconds / 3_600, seconds % 3_600 / 60)
+    } else {
+        format!("{}天{}时", seconds / 86_400, seconds % 86_400 / 3_600)
+    }
+}
 
 fn card(ui: &mut Ui, rect: Rect, theme: &Theme, title: &str, subtitle: &str, accent: Color32) -> Rect {
     let painter = ui.painter_at(rect);

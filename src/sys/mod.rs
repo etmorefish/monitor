@@ -16,6 +16,7 @@ pub mod net;
 pub mod pdh;
 pub mod registry;
 pub mod power;
+pub mod process;
 pub mod sel;
 pub mod wlan;
 

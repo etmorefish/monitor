@@ -85,6 +85,7 @@ monitor --bench        # 逐项采集器耗时 + 稳态 CPU + 内存
 | 磁盘读/写速率 | PDH `\PhysicalDisk(_Total)\Disk {Read,Write} Bytes/sec` | 1 s |
 | 网络每接口速率与累计流量 | `GetIfTable`（枚举）+ `GetIfEntry`（轮询） | 1 s / 30 s |
 | GPU 利用率 / 引擎 / 显存 | PDH `\GPU Engine(*)\Utilization Percentage`、`\GPU Adapter Memory(*)\{Dedicated,Shared} Usage` | 5 s |
+| 进程列表（名称 / PID / CPU / 内存 / 线程 / 句柄 / 启动） | `NtQuerySystemInformation(SystemProcessInformation)` | 5 s |
 | 温度 | PDH `\Thermal Zone Information(*)\High Precision Temperature`（ACPI 热区，单位 0.1 K） | 5 s |
 | 风扇转速 | `--fan-file` 外部桥接（见下） | 5 s |
 | 电池 / 交流供电 | `GetSystemPowerStatus` | 1 s |
@@ -98,7 +99,7 @@ monitor --bench        # 逐项采集器耗时 + 稳态 CPU + 内存
 
 ```powershell
 cargo build --release          # 产物: target\release\monitor.exe (508 KB)
-cargo test                     # 65 个测试：接口读数、布局宽度、JSON、CSV、GPU、24-bit/256 色渲染…
+cargo test                     # 68 个测试：接口读数、布局宽度、JSON、CSV、GPU、进程、24-bit/256 色渲染…
 ```
 
 想放到 PATH 里随时用：
@@ -194,6 +195,7 @@ monitor-gui                              # 打开仪表盘（默认跟随 Window
 monitor-gui --dark                       # 强制深色（--light 强制浅色）
 monitor-gui --lean                       # 不读温度与磁盘速率（同 TUI 的语义）
 monitor-gui --hardware                   # 直接打开硬件页
+monitor-gui --processes                  # 直接打开进程页
 ```
 
 单进程、无 WebView、无 Node 工具链的 egui 窗口，六块卡片铺满整个窗口：
@@ -205,9 +207,13 @@ monitor-gui --hardware                   # 直接打开硬件页
 - **散热**：温度曲线（30–100 °C 自适应刻度）+ 风扇 + 电池
 - **页脚**：程序自身的内存、CPU、采样耗时与帧率
 
-顶部还有两个页面：`总览`（上面这些卡片）和 `硬件`（主板/BIOS、GPU 利用率/显存/引擎、内存条、磁盘型号、网卡与 IPv4，数据来自 SMBIOS 固件表、GPU 性能计数器、存储设备描述和注册表，免管理员）。
+顶部有三个页面：`总览`（上面这些卡片）、`硬件`（主板/BIOS、GPU 利用率/显存/引擎、内存条、磁盘型号、网卡与 IPv4）和 `进程`。
 
 ![硬件页（含 GPU）](docs/gui-hardware.png)
+
+`进程` 页每 5 秒采样一次，列出名称、PID、CPU%、私有内存、启动时长、线程、句柄，可点表头排序、按名称/PID 搜索，并带二次确认的「结束」按钮：
+
+![进程页](docs/gui-process.png)
 
 几条一期优化后的细节：
 
@@ -226,7 +232,10 @@ monitor-gui --hardware                   # 直接打开硬件页
 
 | 操作 | 效果 |
 | --- | --- |
-| 顶部 `总览` / `硬件` | 切换监控页与硬件明细页 |
+| 顶部 `总览` / `硬件` / `进程` | 切换监控页、硬件明细页与进程页 |
+| 进程页点表头 | 按名称 / PID / CPU / 内存 / 启动时长 / 线程 / 句柄排序，再点切换升降序 |
+| 进程页搜索框 | 按进程名或 PID 过滤 |
+| 进程页 `结束` | 二次确认后调用 `TerminateProcess`，失败会显示中文原因 |
 | 悬停任意图表 | 十字线 + 时间与数值气泡 |
 | 点图例（读/写、下行/上行） | 临时隐藏该曲线 |
 | 右上角 `范围` | 1 / 5 / 15 分钟窗口 |
@@ -241,7 +250,7 @@ monitor-gui --hardware                   # 直接打开硬件页
 | 私有内存 | **65.4 MB**（系统字体走内存映射，不占私有提交） |
 | 工作集 | 97 MB |
 | 稳态 CPU | **0.1–0.5 % 单核**（1 帧/秒） |
-| exe 体积 | 4.6 MB |
+| exe 体积 | 4.7 MB |
 | 首帧 | 190 ms |
 | 采样开销 | 与 TUI 相同（约 0.7–0.9 ms/次） |
 
@@ -303,6 +312,7 @@ src/
     ├── disk.rs    卷容量
     ├── net.rs     接口枚举（30 s）+ 单接口轮询（1 s）
     ├── gpu.rs     PDH GPU 引擎利用率 + 显存；EnumDisplayDevices 适配器名
+    ├── process.rs NtQuerySystemInformation 进程列表、CPU 差值、结束进程
     ├── pdh.rs     磁盘速率、ACPI 热区温度
     ├── power.rs   电池与交流状态
     ├── sel.rs     自身内存、CPU、优先级
@@ -320,7 +330,7 @@ src/
 
 ## 路线图
 
-二期计划（硬件明细、Wi-Fi 详情、GPU、进程管理、托盘自启）见 [docs/二期任务清单.md](docs/二期任务清单.md)，其中包含接口选型、验收标准与风险说明；**M1/M2/M3（GPU）已完成**，M4/M5 待做。
+二期计划（硬件明细、Wi-Fi 详情、GPU、进程管理、托盘自启）见 [docs/二期任务清单.md](docs/二期任务清单.md)，其中包含接口选型、验收标准与风险说明；**M1/M2/M3（GPU）/M4（进程）已完成**，M5 待做。
 
 ## 已知限制
 
@@ -332,6 +342,7 @@ src/
 - 不用 `--lean` 时代码会加载 Windows 性能计数器子系统（PDH），这会带来约 5 MB 私有内存和 0.25 秒启动开销——温度和磁盘设备级速率都依赖它。想更省就用 `--lean`。
 - **Wi-Fi 的 SSID 与信号强度受 Windows「定位」权限限制**：未授权时 `WlanQueryInterface` 返回错误 5。monitor 会在硬件页提示"需要定位权限"，IPv4 与链路速率不受影响（走 `GetIpAddrTable` / `GetIfTable`）。
 - **GPU 数据来自 PDH 性能计数器**（Windows 10 1709+）；`--lean` 模式下不初始化 GPU 查询，TUI/GUI 的 GPU 区域隐藏。引擎利用率按 LUID 取各引擎最大值；GPU 适配器名在没有 DXGI 的情况下按显存用量顺序匹配 `EnumDisplayDevicesW`，多 GPU 且显存接近时可能张冠李戴。本机 Windows 11 26200 的 `Dedicated Limit` 计数器不存在，因此专用显存上限显示为未知，只显示已用量。
+- **进程 CPU% 是相对整机 CPU 容量**（与任务管理器一致），5 秒窗口；结束进程需要相应权限，受保护进程（如 System）会明确报"拒绝访问"而不会崩溃。
 - 默认卡片视图需要至少 **100×30** 的窗口；更小会自动回退极简视图，`--classic` 可始终使用极简 TUI。卡片背景会填充单元格，开启终端背景透明/亚克力时看不到壁纸。
 
 ## 前端外壳选型

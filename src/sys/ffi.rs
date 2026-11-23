@@ -30,6 +30,8 @@ pub const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
 pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 
 pub const BELOW_NORMAL_PRIORITY_CLASS: DWORD = 0x0000_4000;
+pub const PROCESS_TERMINATE: DWORD = 0x0001;
+pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 
 pub const ALL_PROCESSOR_GROUPS: u16 = 0xFFFF;
 
@@ -285,6 +287,10 @@ extern "system" {
         user: *mut FILETIME,
     ) -> BOOL;
     pub fn GetCurrentProcess() -> HANDLE;
+    pub fn OpenProcess(access: DWORD, inherit: BOOL, pid: DWORD) -> HANDLE;
+    pub fn TerminateProcess(process: HANDLE, exit_code: u32) -> BOOL;
+    pub fn CloseHandle(handle: HANDLE) -> BOOL;
+    pub fn GetLastError() -> DWORD;
     pub fn SetPriorityClass(process: HANDLE, priority_class: DWORD) -> BOOL;
     pub fn GetTickCount64() -> u64;
     pub fn GetComputerNameW(buffer: *mut u16, size: *mut DWORD) -> BOOL;
