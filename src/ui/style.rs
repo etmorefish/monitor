@@ -5,23 +5,28 @@
 pub enum Color {
     Default,
     Indexed(u8),
+    /// 24-bit colour; only emitted when the terminal advertises truecolor.
+    True(u8, u8, u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Style {
     pub fg: Color,
+    pub bg: Color,
     pub bold: bool,
 }
 
 impl Style {
     pub const PLAIN: Style = Style {
         fg: Color::Default,
+        bg: Color::Default,
         bold: false,
     };
 
     pub const fn fg(color: Color) -> Self {
         Self {
             fg: color,
+            bg: Color::Default,
             bold: false,
         }
     }
@@ -29,11 +34,28 @@ impl Style {
     pub const fn bold(color: Color) -> Self {
         Self {
             fg: color,
+            bg: Color::Default,
             bold: true,
         }
     }
 
+    /// Foreground on a filled background, normal weight.
+    pub const fn pair(fg: Color, bg: Color) -> Self {
+        Self {
+            fg,
+            bg,
+            bold: false,
+        }
+    }
 
+    /// Bold foreground on a filled background.
+    pub const fn pair_bold(fg: Color, bg: Color) -> Self {
+        Self { fg, bg, bold: true }
+    }
+
+    pub const fn with_bg(self, bg: Color) -> Self {
+        Self { bg, ..self }
+    }
 }
 
 /// Semantic colours, so themes only swap numbers.
@@ -129,9 +151,35 @@ pub fn sgr(style: Style, out: &mut String) {
     if style.bold {
         out.push_str(";1");
     }
-    if let Color::Indexed(index) = style.fg {
-        out.push_str(";38;5;");
-        push_u16(out, index as u16);
+    match style.fg {
+        Color::Indexed(index) => {
+            out.push_str(";38;5;");
+            push_u16(out, index as u16);
+        }
+        Color::True(r, g, b) => {
+            out.push_str(";38;2;");
+            push_u16(out, r as u16);
+            out.push(';');
+            push_u16(out, g as u16);
+            out.push(';');
+            push_u16(out, b as u16);
+        }
+        Color::Default => {}
+    }
+    match style.bg {
+        Color::Indexed(index) => {
+            out.push_str(";48;5;");
+            push_u16(out, index as u16);
+        }
+        Color::True(r, g, b) => {
+            out.push_str(";48;2;");
+            push_u16(out, r as u16);
+            out.push(';');
+            push_u16(out, g as u16);
+            out.push(';');
+            push_u16(out, b as u16);
+        }
+        Color::Default => {}
     }
     out.push('m');
 }
@@ -150,5 +198,49 @@ fn push_u16(out: &mut String, mut value: u16) {
     }
     for index in (0..len).rev() {
         out.push(digits[index] as char);
+    }
+}
+
+/// Whether the terminal is known to accept 24-bit SGR colours.
+///
+/// Windows Terminal sets `WT_SESSION`; many other terminals advertise
+/// `COLORTERM=truecolor` (or `24bit`). Plain conhost and classic SSH sessions
+/// fall back to the 256-colour palette.
+pub fn supports_truecolor() -> bool {
+    if let Some(value) = std::env::var_os("COLORTERM") {
+        let value = value.to_string_lossy().to_ascii_lowercase();
+        if value == "truecolor" || value == "24bit" {
+            return true;
+        }
+    }
+    std::env::var_os("WT_SESSION").is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn indexed_sgr_is_unchanged() {
+        let mut out = String::new();
+        sgr(Style::bold(Color::Indexed(45)), &mut out);
+        assert_eq!(out, "\x1b[0;1;38;5;45m");
+    }
+
+    #[test]
+    fn truecolor_sgr_encodes_foreground_and_background() {
+        let mut out = String::new();
+        sgr(
+            Style::pair(Color::True(1, 2, 3), Color::True(4, 5, 6)),
+            &mut out,
+        );
+        assert_eq!(out, "\x1b[0;38;2;1;2;3;48;2;4;5;6m");
+    }
+
+    #[test]
+    fn plain_style_emits_a_reset_only() {
+        let mut out = String::new();
+        sgr(Style::PLAIN, &mut out);
+        assert_eq!(out, "\x1b[0m");
     }
 }

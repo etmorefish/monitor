@@ -4,6 +4,7 @@
 //! 1 is useful detail, 2 is extra. When the window is short the extra blocks are
 //! dropped in that order, so the layout degrades instead of scrolling.
 
+pub mod fancy;
 pub mod style;
 pub mod text;
 

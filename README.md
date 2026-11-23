@@ -1,6 +1,6 @@
 # monitor
 
-极低开销的 Windows 资源监控：**CPU、内存、磁盘、网络、温度、风扇、电池**。两种外壳任选——终端界面（383 KB，零依赖）或图形界面（可选 egui，图表 + 交互）。
+极低开销的 Windows 资源监控：**CPU、内存、磁盘、网络、温度、风扇、电池**。三种形态：极简终端界面（默认）、`--fancy` 卡片终端界面、图形界面（可选 egui）；前两者零依赖、单进程。
 
 ```
  monitor  L-NVC-301597  运行 1天20时31分                                                      2026-11-18 11:26:03
@@ -24,7 +24,7 @@
 
 | 项目 | 默认模式 | `--lean` 极简模式 |
 | --- | --- | --- |
-| exe 体积 | 383 KB | 383 KB |
+| exe 体积 | 457 KB | 457 KB |
 | CPU（稳定运行） | **≈ 0.2 %（单个核心）** | < 0.05 % |
 | 私有内存 | 7.0–7.3 MB | 1.9 MB |
 | 工作集 | 15.4 MB | 9.0 MB |
@@ -33,7 +33,7 @@
 | 启动 | 首帧立即出现（先画启动提示），传感器数据约 0.5 s 后到齐 | 约 0.2 s |
 | 句柄 | ≈ 190 | ≈ 76 |
 
-换算一下：在 22 线程的机器上，0.2 % 单核 ≈ 全机总算力的 **0.01 %**。界面底部会实时显示它自己的内存、CPU 和采样耗时，可以随时核对。
+换算一下：在 22 线程的机器上，0.2 % 单核 ≈ 全机总算力的 **0.01 %**。界面底部会实时显示它自己的内存、CPU 和采样耗时，可以随时核对。`--fancy` 只增加渲染代码，采样路径与极简模式完全相同。
 
 想自己复现：
 
@@ -73,8 +73,8 @@ monitor --bench        # 逐项采集器耗时 + 稳态 CPU + 内存
 需要 Rust 1.75+（开发用 1.98）。仓库内**没有任何依赖**，所以 `cargo build` 不需要联网：
 
 ```powershell
-cargo build --release          # 产物: target\release\monitor.exe (383 KB)
-cargo test                     # 45 个测试：接口读数、布局宽度、JSON、CSV 解析…
+cargo build --release          # 产物: target\release\monitor.exe (457 KB)
+cargo test                     # 63 个测试：接口读数、布局宽度、JSON、CSV、24-bit/256 色渲染…
 ```
 
 想放到 PATH 里随时用：
@@ -96,6 +96,9 @@ monitor --mini             # 输出一行精简状态
 monitor -w 5               # 无界面模式，每 5 秒一行，适合写日志
 monitor --log perf.csv     # 同时把每次采样追加成 CSV
 monitor --lean             # 极简模式：不读温度和磁盘速率（内存 1.9 MB）
+monitor --fancy            # 美化 TUI：24-bit 卡片仪表盘（需要至少 100×30 窗口）
+monitor --fancy --theme light      # 浅色美化界面
+monitor --fancy --color 256        # 不支持 24-bit 的终端用 256 色
 monitor --help             # 全部选项
 ```
 
@@ -106,7 +109,8 @@ monitor --help             # 全部选项
 | `q` / `Ctrl+C` | 退出（会恢复原来的屏幕） |
 | `p` | 暂停 / 继续采样 |
 | `+` / `-` | 加快 / 减慢刷新 |
-| `c` | 显示 / 隐藏每核网格 |
+| `c` | 显示 / 隐藏每核视图（极简网格 / 美化热力条） |
+| `v` | 极简 / 美化视图切换 |
 | `t` | 深色 / 浅色配色 |
 | `r` | 清空历史曲线 |
 
@@ -128,6 +132,23 @@ monitor --log C:\logs\perf.csv -w 10
 ```
 
 JSON 结构固定，包含 `cpu` / `memory` / `disks` / `disk_io` / `network` / `thermal` / `power` / `self` 八段；CSV 每次采样一行，带表头，可直接被 Excel 或 pandas 读取。
+
+## 美化 TUI（`--fancy`）
+
+![卡片仪表盘](docs/tui-fancy.png)
+
+```powershell
+monitor --fancy                    # 24-bit 卡片仪表盘
+monitor --fancy --theme light      # 浅色
+monitor --fancy --color 256        # conhost / 不支持 24-bit 的终端
+monitor --demo --fancy --width 120 --height 34   # 纯文本布局检查
+```
+
+默认仍是极简 TUI；`--fancy` 只新增渲染器：同一套采样与 1 Hz 主循环、零依赖、每帧仍只写一次控制台。24-bit 优先，256 色自动降级；窗口小于 100×30 时自动回退极简布局。TUI 内按 `v` 切换两种视图，`t` 切换深浅色。
+
+![浅色卡片仪表盘](docs/tui-fancy-light.png)
+
+设计取舍、颜色降级、代码结构与验证数据见 [docs/美化TUI.md](docs/美化TUI.md)。
 
 ## 图形界面（可选）
 
@@ -200,7 +221,7 @@ Windows 普通用户态**读不到风扇转速**，这不是本程序偷懒：
 
 - 风扇转速在 BIOS/EC 里，Windows 只通过两个渠道暴露：SMBIOS 的 Type 29 风扇记录（桌面主板常见），或者厂商 ACPI 接口（需内核驱动）。
 - 本机（Lenovo ThinkBook 21LU003GCD）的 `Win32_Fan` 类**没有任何实例**，`root\WMI` 下也没有 Lenovo 命名空间——固件确实没把风扇暴露给系统。
-- 任何能显示风扇转速的 Windows 工具（LibreHardwareMonitor、HWiNFO、AIDA64）都**自带并加载一个内核驱动**，且需要管理员权限。这个驱动是签名内核模块，不可能、也不应该塞进一个 383 KB 的普通程序里。
+- 任何能显示风扇转速的 Windows 工具（LibreHardwareMonitor、HWiNFO、AIDA64）都**自带并加载一个内核驱动**，且需要管理员权限。这个驱动是签名内核模块，不可能、也不应该塞进一个几百 KB 的普通程序里。
 
 所以 monitor 的做法是：
 
@@ -234,9 +255,10 @@ src/
 ├── output.rs      文本、JSON、单行、CSV 输出
 ├── term.rs        控制台模式、备用屏幕、整帧写入、按键线程
 ├── ui/
-│   ├── mod.rs     布局：分级优先的区块、宽度自适应、ANSI 序列化
+│   ├── mod.rs     极简布局：分级优先的区块、宽度自适应、ANSI 序列化
+│   ├── fancy.rs   美化布局：卡片、图表、热力条、truecolor/256 调色板
 │   ├── text.rs    宽度精确的 Span/Line、仪表条、火花线、CJK 宽度
-│   └── style.rs   256 色调色板（深/浅）
+│   └── style.rs   调色板与 SGR（256 色 / 24-bit）
 └── sys/           原生读数，全部只调用 Win32/PDH/NT
     ├── ffi.rs     手写的约 20 个函数声明与结构体
     ├── cpu.rs     总量/每核时间、频率、CPUID 型号、拓扑
@@ -271,6 +293,7 @@ src/
 - 卷容量与温度是 5 秒粒度（CPU/内存/网络/磁盘速率仍是 1 秒）。
 - 不用 `--lean` 时代码会加载 Windows 性能计数器子系统（PDH），这会带来约 5 MB 私有内存和 0.25 秒启动开销——温度和磁盘设备级速率都依赖它。想更省就用 `--lean`。
 - **Wi-Fi 的 SSID 与信号强度受 Windows「定位」权限限制**：未授权时 `WlanQueryInterface` 返回错误 5。monitor 会在硬件页提示"需要定位权限"，IPv4 与链路速率不受影响（走 `GetIpAddrTable` / `GetIfTable`）。
+- `--fancy` 需要至少 **100×30** 的窗口；更小会自动回退极简视图。卡片背景会填充单元格，开启终端背景透明/亚克力时看不到壁纸。
 
 ## 前端外壳选型
 

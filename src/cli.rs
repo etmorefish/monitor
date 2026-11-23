@@ -2,6 +2,14 @@
 
 use std::path::PathBuf;
 
+/// Colour depth for the fancy shell; `Auto` sniffs Windows Terminal / COLORTERM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorMode {
+    Auto,
+    Indexed,
+    Truecolor,
+}
+
 #[derive(Clone, Debug)]
 pub struct Options {
     pub interval: f64,
@@ -11,6 +19,8 @@ pub struct Options {
     pub log: Option<PathBuf>,
     pub fan_file: Option<PathBuf>,
     pub theme: String,
+    pub fancy: bool,
+    pub color: ColorMode,
     pub lean: bool,
     pub low_priority: bool,
     pub mini: bool,
@@ -34,6 +44,8 @@ impl Default for Options {
             log: None,
             fan_file: None,
             theme: "dark".to_string(),
+            fancy: false,
+            color: ColorMode::Auto,
             lean: false,
             low_priority: true,
             mini: false,
@@ -80,6 +92,16 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Options, String>
                 options.once = true;
             }
             "--demo" => options.demo = true,
+            "--fancy" => options.fancy = true,
+            "--color" => {
+                let value = take_value("--color")?;
+                options.color = match value.as_str() {
+                    "auto" => ColorMode::Auto,
+                    "256" | "indexed" => ColorMode::Indexed,
+                    "truecolor" | "24bit" | "24-bit" => ColorMode::Truecolor,
+                    _ => return Err("--color 只支持 auto / 256 / truecolor".to_string()),
+                };
+            }
             "--bench" => options.bench = true,
             "--lean" => options.lean = true,
             "--trace" => options.trace = true,
@@ -163,9 +185,11 @@ monitor — 极低开销的 Windows 资源监控 (CPU / 内存 / 磁盘 / 网络
       --log <文件>        追加 CSV 记录（表头自动写入）
       --fan-file <文件>   从文件读取风扇转速，每行 “名称,转速”
       --theme <dark|light> 配色，默认 dark
+      --fancy             美化 TUI：24-bit 卡片仪表盘（需要至少 100×30 的窗口）
+      --color <模式>      颜色深度：auto / 256 / truecolor（默认 auto）
       --lean              极简模式：不读温度和磁盘速率（不初始化性能计数器，内存约 1.9 MB）
       --normal-priority   不降低进程优先级（默认已设为低于正常）
-      --demo              无终端渲染若干帧，便于检查布局
+      --demo              无终端渲染若干帧，便于检查布局（可加 --fancy）
       --bench             测量每个采集器的单次耗时（诊断用）
       --trace             配合 -w 输出每次采样耗时到标准错误（诊断用）
       --width/--height    配合 --demo 指定尺寸（默认 110x30）
@@ -174,7 +198,7 @@ monitor — 极低开销的 Windows 资源监控 (CPU / 内存 / 磁盘 / 网络
   -V, --version           显示版本
 
 界面快捷键:
-  q 退出    p 暂停/继续    +/- 调速    c 核心网格    t 主题    r 清空历史
+  q 退出    p 暂停/继续    +/- 调速    c 核心网格/热力条    v 视图    t 主题    r 清空历史
 ";
 
 #[cfg(test)]
@@ -210,7 +234,21 @@ mod tests {
         assert!(parse_args(&["--interval", "abc"]).is_err());
         assert!(parse_args(&["--interval", "0"]).is_err());
         assert!(parse_args(&["--theme", "neon"]).is_err());
+        assert!(parse_args(&["--color", "pink"]).is_err());
         assert!(parse_args(&["--nope"]).is_err());
+    }
+
+    #[test]
+    fn fancy_and_colour_modes_parse() {
+        let options = parse_args(&["--fancy"]).unwrap();
+        assert!(options.fancy);
+        assert_eq!(options.color, ColorMode::Auto);
+
+        assert_eq!(parse_args(&["--color", "256"]).unwrap().color, ColorMode::Indexed);
+        assert_eq!(
+            parse_args(&["--color=truecolor"]).unwrap().color,
+            ColorMode::Truecolor
+        );
     }
 
     #[test]

@@ -10,3 +10,6 @@
 # 实验项目的构建产物
 experiments/*/target
 /shots
+
+# 设计过程稿（本地）
+/design-demos

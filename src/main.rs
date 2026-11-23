@@ -136,6 +136,13 @@ fn run_tui(options: &cli::Options) -> ExitCode {
 
     let mut theme = options.theme.clone();
     let mut palette = Palette::by_name(&theme);
+    let truecolor = match options.color {
+        cli::ColorMode::Auto => ui::style::supports_truecolor(),
+        cli::ColorMode::Indexed => false,
+        cli::ColorMode::Truecolor => true,
+    };
+    let mut fancy = options.fancy;
+    let mut fancy_palette = ui::fancy::Palette::new(&theme, truecolor);
 
     // First paint right away: opening the temperature provider takes a moment
     // and a blank console for half a second feels like a slow program.
@@ -174,7 +181,11 @@ fn run_tui(options: &cli::Options) -> ExitCode {
         }
 
         let (width, height) = terminal.size();
-        let lines = ui::render(&sampler.model, width, height, &palette);
+        let lines = if fancy && ui::fancy::fits(width, height) {
+            ui::fancy::render(&sampler.model, width, height, &fancy_palette)
+        } else {
+            ui::render(&sampler.model, width, height, &palette)
+        };
         let frame = ui::serialize(&lines, width, height);
         terminal.draw(&frame);
 
@@ -197,6 +208,7 @@ fn run_tui(options: &cli::Options) -> ExitCode {
                     next_tick = Instant::now();
                 }
                 b'c' | b'C' => sampler.model.show_cores = !sampler.model.show_cores,
+                b'v' | b'V' => fancy = !fancy,
                 b't' | b'T' => {
                     theme = if theme == "dark" {
                         "light".to_string()
@@ -204,6 +216,7 @@ fn run_tui(options: &cli::Options) -> ExitCode {
                         "dark".to_string()
                     };
                     palette = Palette::by_name(&theme);
+                    fancy_palette = ui::fancy::Palette::new(&theme, truecolor);
                 }
                 b'r' | b'R' => sampler.reset_history(),
                 _ => {}
@@ -361,16 +374,22 @@ fn run_bench() -> ExitCode {
 fn run_demo(options: &cli::Options) -> ExitCode {
     let mut sampler = metrics::Sampler::new(options.interval, options.fan_file.clone(), !options.lean);
     let palette = Palette::by_name(&options.theme);
+    let fancy_palette = ui::fancy::Palette::new(&options.theme, true);
     let width = options.width.unwrap_or(110).max(30);
     let height = options.height.unwrap_or(30).max(8);
     let frames = options.frames.max(1);
+    let fancy = options.fancy && ui::fancy::fits(width, height);
 
     for index in 0..frames {
         if index > 0 {
             std::thread::sleep(Duration::from_millis(700));
             sampler.sample();
         }
-        let lines = ui::render(&sampler.model, width, height, &palette);
+        let lines = if fancy {
+            ui::fancy::render(&sampler.model, width, height, &fancy_palette)
+        } else {
+            ui::render(&sampler.model, width, height, &palette)
+        };
         print!("{}", ui::plain(&lines, width));
         if index + 1 < frames {
             println!("{}", "─".repeat(width));
