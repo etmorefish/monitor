@@ -44,7 +44,7 @@ impl Default for Options {
             log: None,
             fan_file: None,
             theme: "dark".to_string(),
-            fancy: false,
+            fancy: true,
             color: ColorMode::Auto,
             lean: false,
             low_priority: true,
@@ -93,6 +93,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Options, String>
             }
             "--demo" => options.demo = true,
             "--fancy" => options.fancy = true,
+            "--classic" => options.fancy = false,
             "--color" => {
                 let value = take_value("--color")?;
                 options.color = match value.as_str() {
@@ -168,7 +169,8 @@ monitor — 极低开销的 Windows 资源监控 (CPU / 内存 / 磁盘 / 网络
   monitor [选项]
 
 常用:
-  monitor                 打开监控界面 (每 1 秒刷新)
+  monitor                 卡片仪表盘 (每 1 秒刷新，默认)
+  monitor --classic       极简 TUI
   monitor -i 0.5          刷新间隔 0.5 秒 (可 0.1 – 60)
   monitor --once          输出一次快照后退出
   monitor --json          输出一次 JSON (给脚本/状态栏用)
@@ -185,11 +187,12 @@ monitor — 极低开销的 Windows 资源监控 (CPU / 内存 / 磁盘 / 网络
       --log <文件>        追加 CSV 记录（表头自动写入）
       --fan-file <文件>   从文件读取风扇转速，每行 “名称,转速”
       --theme <dark|light> 配色，默认 dark
-      --fancy             美化 TUI：24-bit 卡片仪表盘（需要至少 100×30 的窗口）
+      --classic           使用极简 TUI（默认是卡片仪表盘）
+      --fancy             显式启用卡片仪表盘（默认）
       --color <模式>      颜色深度：auto / 256 / truecolor（默认 auto）
       --lean              极简模式：不读温度和磁盘速率（不初始化性能计数器，内存约 1.9 MB）
       --normal-priority   不降低进程优先级（默认已设为低于正常）
-      --demo              无终端渲染若干帧，便于检查布局（可加 --fancy）
+      --demo              无终端渲染若干帧，便于检查布局（默认卡片布局）
       --bench             测量每个采集器的单次耗时（诊断用）
       --trace             配合 -w 输出每次采样耗时到标准错误（诊断用）
       --width/--height    配合 --demo 指定尺寸（默认 110x30）
@@ -215,6 +218,7 @@ mod tests {
         assert_eq!(options.interval, 1.0);
         assert!(options.low_priority);
         assert!(!options.once);
+        assert!(options.fancy, "the card shell is the default view");
     }
 
     #[test]
@@ -244,7 +248,11 @@ mod tests {
         assert!(options.fancy);
         assert_eq!(options.color, ColorMode::Auto);
 
-        assert_eq!(parse_args(&["--color", "256"]).unwrap().color, ColorMode::Indexed);
+        assert!(!parse_args(&["--classic"]).unwrap().fancy);
+        assert_eq!(
+            parse_args(&["--color", "256"]).unwrap().color,
+            ColorMode::Indexed
+        );
         assert_eq!(
             parse_args(&["--color=truecolor"]).unwrap().color,
             ColorMode::Truecolor

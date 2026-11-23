@@ -1,12 +1,12 @@
-# 美化 TUI（`--fancy`）
+# 卡片仪表盘（默认视图）
 
-日期：2026-11-23。设计确认：方向 **A · 控制室 Control Room**（三方向初稿保存在本地 `design-demos/tui/`，不随仓库分发）。
+日期：2026-11-23。设计确认：方向 **A · 控制室 Control Room**（三方向初稿保存在本地 `design-demos/tui/`，不随仓库分发）。从 2026-11-23 起，卡片视图是 `monitor` 的默认界面，`--classic` 可切回极简 TUI。
 
 ![深色卡片仪表盘](tui-fancy.png)
 
 ## 目标
 
-在**不替换**现有极简 TUI 的前提下，新增一个可选的渲染外壳：
+在保留极简 TUI（`--classic`）的前提下，把卡片渲染器设为默认界面：
 
 - 复用同一套 `Model` / `Sampler` / 历史环，采样与 1 Hz 主循环完全不变。
 - 零第三方依赖；仍然是每帧拼成一个字符串、一次 `WriteConsoleW`。
@@ -41,10 +41,11 @@
 ## 用法
 
 ```powershell
-monitor --fancy                 # 卡片仪表盘（默认深色/浅色跟随 --theme）
-monitor --fancy --theme light   # 浅色
-monitor --fancy --color 256     # conhost / 不支持 24-bit 的终端
-monitor --demo --fancy --width 120 --height 34   # 无终端输出纯文本布局，便于检查
+monitor                          # 默认卡片仪表盘（深色/浅色跟随 --theme）
+monitor --classic                # 切回极简 TUI
+monitor --theme light            # 浅色
+monitor --color 256              # conhost / 不支持 24-bit 的终端
+monitor --demo --width 120 --height 34   # 无终端输出纯文本布局，便于检查
 ```
 
 TUI 内按 `v` 切换视图，按 `t` 切换深浅色。
@@ -56,8 +57,8 @@ TUI 内按 `v` 切换视图，按 `t` 切换深浅色。
 | `src/ui/fancy.rs` | 新增：调色板、`Grid` 单元格画布、卡片布局、面积图/仪表/热力条、测试 |
 | `src/ui/style.rs` | `Color::True(r,g,b)`、`Style.bg`、24-bit/256 SGR、truecolor 探测 |
 | `src/ui/mod.rs` | 挂载 `fancy` 模块 |
-| `src/cli.rs` | `--fancy`、`--color auto|256|truecolor` |
-| `src/main.rs` | TUI 渲染分派、`v`/`t` 快捷键、`--demo --fancy` |
+| `src/cli.rs` | `--classic` / `--fancy`、`--color auto|256|truecolor`（默认卡片视图） |
+| `src/main.rs` | TUI 渲染分派、`v`/`t` 快捷键、`--demo` 卡片布局 |
 | `tests` | 新增宽度/高度/256/truecolor/浅色测试 |
 
 渲染仍是一个单元格网格（宽度精确、CJK 占 2 列、宽字符跨边界保护），直接把网格转成既有的 `Line`/`Span` 再序列化；没有引入新的终端写入路径。
@@ -71,5 +72,5 @@ TUI 内按 `v` 切换视图，按 `t` 切换深浅色。
 ## 已知限制
 
 - 方块与圆角字符依赖终端字体；Windows Terminal + Cascadia 系列正常。极少数 SSH/老终端可能出现边框错位。
-- `--fancy` 不是默认视图；默认仍保持极简 TUI 的 383 KB 时代开销。若希望默认美化，可后续加配置项。
+- 卡片视图是默认界面；如果终端不支持方块/圆角字形或窗口过小，可用 `--classic` 回到极简 TUI。
 - 背景色填充意味着不能透出终端壁纸/亚克力背景。

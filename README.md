@@ -1,6 +1,10 @@
 # monitor
 
-极低开销的 Windows 资源监控：**CPU、内存、磁盘、网络、温度、风扇、电池**。三种形态：极简终端界面（默认）、`--fancy` 卡片终端界面、图形界面（可选 egui）；前两者零依赖、单进程。
+极低开销的 Windows 资源监控：**CPU、内存、磁盘、网络、温度、风扇、电池**。默认是卡片式终端仪表盘（`--fancy`），可用 `--classic` 切回极简 TUI；另有可选图形界面（egui）。终端形态零依赖、单进程。
+
+![默认卡片仪表盘](docs/tui-fancy.png)
+
+极简 TUI（`--classic`）的输出样例：
 
 ```
  monitor  L-NVC-301597  运行 1天20时31分                                                      2026-11-18 11:26:03
@@ -15,14 +19,14 @@
       IO 读 0 B/s   写 499 KB/s                     █
  网络 Intel Wi-Fi 6E AX211 160MHz  ↓ 0 B/s  ↑ 0 B/s   累计 ↓510 MB ↑131 MB                   ▁
  散热 95°C THM0   风扇 — 固件未暴露   电池 79% 充电中
- 自身 7.1 MB  0.00% CPU  采样 354 µs  1.0s 刷新                                 q 退出  p 暂停  +/- 间隔  c 核心  t 主题
+ 自身 7.1 MB  0.00% CPU  采样 354 µs  1.0s 刷新                                 q 退出  p 暂停  +/- 间隔  c 核心  v 视图  t 主题
 ```
 
-## 实测开销（终端界面）
+## 实测开销（极简 TUI）
 
-在本机（Intel Ultra 7 155H，16 核 22 线程，32 GB，NVMe，Windows 11 26200）实测，默认 1 秒刷新：
+在本机（Intel Ultra 7 155H，16 核 22 线程，32 GB，NVMe，Windows 11 26200）实测，极简 TUI 1 秒刷新：
 
-| 项目 | 默认模式 | `--lean` 极简模式 |
+| 项目 | 极简模式 | `--lean` 极简模式 |
 | --- | --- | --- |
 | exe 体积 | 457 KB | 457 KB |
 | CPU（稳定运行） | **≈ 0.2 %（单个核心）** | < 0.05 % |
@@ -33,7 +37,7 @@
 | 启动 | 首帧立即出现（先画启动提示），传感器数据约 0.5 s 后到齐 | 约 0.2 s |
 | 句柄 | ≈ 190 | ≈ 76 |
 
-换算一下：在 22 线程的机器上，0.2 % 单核 ≈ 全机总算力的 **0.01 %**。界面底部会实时显示它自己的内存、CPU 和采样耗时，可以随时核对。`--fancy` 只增加渲染代码，采样路径与极简模式完全相同。
+换算一下：在 22 线程的机器上，0.2 % 单核 ≈ 全机总算力的 **0.01 %**。界面底部会实时显示它自己的内存、CPU 和采样耗时，可以随时核对。卡片仪表盘与极简 TUI 共用同一套采样；上面的数字是极简模式实测，卡片视图只多出每秒一次的渲染开销。
 
 想自己复现：
 
@@ -88,7 +92,8 @@ Copy-Item target\release\monitor.exe "$env:LOCALAPPDATA\Microsoft\WindowsApps\mo
 ## 用法
 
 ```powershell
-monitor                    # 打开监控界面，1 秒刷新
+monitor                    # 卡片仪表盘（默认），1 秒刷新
+monitor --classic          # 极简 TUI（原来的界面）
 monitor -i 0.5             # 0.5 秒刷新（0.1 – 60 秒）
 monitor --once             # 打印一次快照后退出
 monitor --json             # 输出一次 JSON
@@ -96,8 +101,8 @@ monitor --mini             # 输出一行精简状态
 monitor -w 5               # 无界面模式，每 5 秒一行，适合写日志
 monitor --log perf.csv     # 同时把每次采样追加成 CSV
 monitor --lean             # 极简模式：不读温度和磁盘速率（内存 1.9 MB）
-monitor --fancy            # 美化 TUI：24-bit 卡片仪表盘（需要至少 100×30 窗口）
-monitor --fancy --theme light      # 浅色美化界面
+monitor --fancy            # 显式指定卡片仪表盘（默认）
+monitor --fancy --theme light      # 浅色卡片界面
 monitor --fancy --color 256        # 不支持 24-bit 的终端用 256 色
 monitor --help             # 全部选项
 ```
@@ -114,7 +119,7 @@ monitor --help             # 全部选项
 | `t` | 深色 / 浅色配色 |
 | `r` | 清空历史曲线 |
 
-窗口很矮时会自动丢弃次要内容（先丢历史曲线，再丢每核网格、额外卷和网卡），不会滚动；窄到 72 列以下切换成紧凑模式。
+窗口很矮时极简视图会自动丢弃次要内容（先丢历史曲线，再丢每核网格、额外卷和网卡），不会滚动；窄到 72 列以下切换成紧凑模式。卡片视图需要至少 100×30，更小会自动回退极简视图。
 
 ### 给脚本和状态栏用
 
@@ -133,18 +138,17 @@ monitor --log C:\logs\perf.csv -w 10
 
 JSON 结构固定，包含 `cpu` / `memory` / `disks` / `disk_io` / `network` / `thermal` / `power` / `self` 八段；CSV 每次采样一行，带表头，可直接被 Excel 或 pandas 读取。
 
-## 美化 TUI（`--fancy`）
-
-![卡片仪表盘](docs/tui-fancy.png)
+## 卡片仪表盘（默认）
 
 ```powershell
-monitor --fancy                    # 24-bit 卡片仪表盘
-monitor --fancy --theme light      # 浅色
-monitor --fancy --color 256        # conhost / 不支持 24-bit 的终端
-monitor --demo --fancy --width 120 --height 34   # 纯文本布局检查
+monitor                            # 默认卡片仪表盘（24-bit）
+monitor --classic                  # 切回极简 TUI
+monitor --theme light              # 浅色
+monitor --color 256                # conhost / 不支持 24-bit 的终端
+monitor --demo --width 120 --height 34   # 纯文本布局检查
 ```
 
-默认仍是极简 TUI；`--fancy` 只新增渲染器：同一套采样与 1 Hz 主循环、零依赖、每帧仍只写一次控制台。24-bit 优先，256 色自动降级；窗口小于 100×30 时自动回退极简布局。TUI 内按 `v` 切换两种视图，`t` 切换深浅色。
+默认就是卡片视图：同一套采样与 1 Hz 主循环、零依赖、每帧仍只写一次控制台。24-bit 优先，256 色自动降级；窗口小于 100×30 时自动回退极简布局。TUI 内按 `v` 切换两种视图，`t` 切换深浅色。
 
 ![浅色卡片仪表盘](docs/tui-fancy-light.png)
 
@@ -293,7 +297,7 @@ src/
 - 卷容量与温度是 5 秒粒度（CPU/内存/网络/磁盘速率仍是 1 秒）。
 - 不用 `--lean` 时代码会加载 Windows 性能计数器子系统（PDH），这会带来约 5 MB 私有内存和 0.25 秒启动开销——温度和磁盘设备级速率都依赖它。想更省就用 `--lean`。
 - **Wi-Fi 的 SSID 与信号强度受 Windows「定位」权限限制**：未授权时 `WlanQueryInterface` 返回错误 5。monitor 会在硬件页提示"需要定位权限"，IPv4 与链路速率不受影响（走 `GetIpAddrTable` / `GetIfTable`）。
-- `--fancy` 需要至少 **100×30** 的窗口；更小会自动回退极简视图。卡片背景会填充单元格，开启终端背景透明/亚克力时看不到壁纸。
+- 默认卡片视图需要至少 **100×30** 的窗口；更小会自动回退极简视图，`--classic` 可始终使用极简 TUI。卡片背景会填充单元格，开启终端背景透明/亚克力时看不到壁纸。
 
 ## 前端外壳选型
 
