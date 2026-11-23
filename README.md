@@ -1,5 +1,8 @@
 # monitor
 
+[![Release](https://img.shields.io/github/v/release/etmorefish/monitor?display_name=tag&sort=semver)](https://github.com/etmorefish/monitor/releases/latest)
+[![Release build](https://github.com/etmorefish/monitor/actions/workflows/release.yml/badge.svg)](https://github.com/etmorefish/monitor/actions/workflows/release.yml)
+
 极低开销的 Windows 资源监控：**CPU、内存、磁盘、网络、温度、风扇、电池**。默认是卡片式终端仪表盘（`--fancy`），可用 `--classic` 切回极简 TUI；另有可选图形界面（egui）。终端形态零依赖、单进程。
 
 ![默认卡片仪表盘](docs/tui-fancy.png)
@@ -22,13 +25,29 @@
  自身 7.1 MB  0.00% CPU  采样 354 µs  1.0s 刷新                                 q 退出  p 暂停  +/- 间隔  c 核心  v 视图  t 主题
 ```
 
+## 下载安装
+
+不想自己编译时，从 [Releases](https://github.com/etmorefish/monitor/releases/latest) 下载最新的 `monitor-windows-x64.zip`：
+
+- `monitor.exe`：默认卡片 TUI；加 `--classic` 使用极简 TUI
+- `monitor-gui.exe`：可选 egui 仪表盘
+- `README.md` / `LICENSE` / `docs/`：文档与截图
+- `SHA256SUMS.txt`：zip 的 SHA-256 校验和
+
+解压到任意目录即可运行。想放进 PATH：
+
+```powershell
+Copy-Item .\monitor.exe "$env:LOCALAPPDATA\Microsoft\WindowsApps\monitor.exe"
+monitor
+```
+
 ## 实测开销（极简 TUI）
 
 在本机（Intel Ultra 7 155H，16 核 22 线程，32 GB，NVMe，Windows 11 26200）实测，极简 TUI 1 秒刷新：
 
 | 项目 | 极简模式 | `--lean` 极简模式 |
 | --- | --- | --- |
-| exe 体积 | 457 KB | 457 KB |
+| exe 体积 | 458 KB | 458 KB |
 | CPU（稳定运行） | **≈ 0.2 %（单个核心）** | < 0.05 % |
 | 私有内存 | 7.0–7.3 MB | 1.9 MB |
 | 工作集 | 15.4 MB | 9.0 MB |
@@ -77,7 +96,7 @@ monitor --bench        # 逐项采集器耗时 + 稳态 CPU + 内存
 需要 Rust 1.75+（开发用 1.98）。仓库内**没有任何依赖**，所以 `cargo build` 不需要联网：
 
 ```powershell
-cargo build --release          # 产物: target\release\monitor.exe (457 KB)
+cargo build --release          # 产物: target\release\monitor.exe (458 KB)
 cargo test                     # 63 个测试：接口读数、布局宽度、JSON、CSV、24-bit/256 色渲染…
 ```
 
@@ -88,6 +107,16 @@ Copy-Item target\release\monitor.exe "$env:LOCALAPPDATA\Microsoft\WindowsApps\mo
 ```
 
 （`WindowsApps` 已在用户 PATH 中。也可以复制到任意自建目录并加入 PATH。）
+
+### 自动发布
+
+仓库推送 `v*` 标签时，[release.yml](.github/workflows/release.yml) 会在 `windows-latest` 上：
+
+1. 构建 `monitor.exe`（零依赖 TUI）与 `monitor-gui.exe`（`--features gui`）；
+2. 打包 `monitor-windows-x64.zip` 并生成 `SHA256SUMS.txt`；
+3. 创建对应版本的 GitHub Release 并附上这两个文件。
+
+也可以在 GitHub Actions 页面手动触发 `Release` workflow（`workflow_dispatch`），手动运行只产出 Actions artifact，不创建 Release。
 
 ## 用法
 

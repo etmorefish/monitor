@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build terminal shells
+        run: cargo build --release --locked
+
+      - name: Build GUI shell
+        run: cargo build --release --locked --features gui
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          $zip = "monitor-windows-x64.zip"
+          Compress-Archive -Path target\release\monitor.exe, target\release\monitor-gui.exe, README.md, LICENSE, docs -DestinationPath $zip -Force
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $zip" | Set-Content SHA256SUMS.txt -Encoding ascii
+          Get-Item target\release\monitor.exe, target\release\monitor-gui.exe, $zip, SHA256SUMS.txt |
+            Select-Object Name, Length |
+            Format-Table -AutoSize
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            monitor-windows-x64.zip
+            SHA256SUMS.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Keep build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-windows-x64
+          path: |
+            monitor-windows-x64.zip
+            SHA256SUMS.txt
