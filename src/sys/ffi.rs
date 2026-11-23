@@ -289,6 +289,12 @@ extern "system" {
     pub fn GetCurrentProcess() -> HANDLE;
     pub fn OpenProcess(access: DWORD, inherit: BOOL, pid: DWORD) -> HANDLE;
     pub fn TerminateProcess(process: HANDLE, exit_code: u32) -> BOOL;
+    pub fn QueryFullProcessImageNameW(
+        process: HANDLE,
+        flags: DWORD,
+        exe_name: *mut u16,
+        size: *mut DWORD,
+    ) -> BOOL;
     pub fn CloseHandle(handle: HANDLE) -> BOOL;
     pub fn GetLastError() -> DWORD;
     pub fn SetPriorityClass(process: HANDLE, priority_class: DWORD) -> BOOL;

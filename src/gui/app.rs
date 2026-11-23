@@ -4,14 +4,16 @@
 //! size, so the grid always fills the page and degrades in two breakpoints
 //! instead of scrolling.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
     self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Painter, Pos2, Rect,
-    RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder,
+    RichText, Sense, Stroke, StrokeKind, TextureHandle, Ui, UiBuilder,
 };
 
 use super::chart::{self, LineChart, Series, Unit};
+use super::icons;
 use super::theme::Theme;
 use super::throttle::{self, MouseThrottle};
 use crate::format;
@@ -80,6 +82,10 @@ pub struct Dashboard {
     process_search: String,
     process_sort: ProcessSort,
     process_ascending: bool,
+    process_selected: Option<u32>,
+    process_selected_auto: bool,
+    process_paths: HashMap<u32, (u64, Option<String>)>,
+    process_icons: HashMap<String, Option<TextureHandle>>,
     process_confirm: Option<u32>,
     process_message: Option<(String, bool)>,
     frames: u32,
@@ -140,6 +146,10 @@ impl Dashboard {
             process_search: String::new(),
             process_sort: ProcessSort::Cpu,
             process_ascending: false,
+            process_selected: None,
+            process_selected_auto: true,
+            process_paths: HashMap::new(),
+            process_icons: HashMap::new(),
             process_confirm: None,
             process_message: None,
             frames: 0,
@@ -321,6 +331,13 @@ impl Dashboard {
             if ui.button("刷新").clicked() {
                 refresh = true;
             }
+            ui.add_space(6.0);
+            stat_pill(ui, &format!("{total} 进程"), theme.accent);
+            stat_pill(
+                ui,
+                &format!("{} 线程", self.processes.total_threads),
+                theme.dim,
+            );
             if let Some((message, ok)) = &self.process_message {
                 let color = if *ok { theme.ok } else { theme.bad };
                 ui.label(RichText::new(message).size(10.5).color(color));
@@ -330,23 +347,27 @@ impl Dashboard {
         let current_sort = self.process_sort;
         let current_ascending = self.process_ascending;
         let gap = 8.0;
-        let pid_w = 56.0;
-        let cpu_w = 64.0;
-        let mem_w = 86.0;
-        let age_w = 76.0;
-        let threads_w = 52.0;
-        let handles_w = 52.0;
-        let kill_w = 52.0;
-        let name_w = (content.width()
-            - pid_w
-            - cpu_w
-            - mem_w
-            - age_w
-            - threads_w
-            - handles_w
-            - kill_w
-            - gap * 8.0)
-            .max(120.0);
+        let icon_w = 26.0;
+        let pid_w = 58.0;
+        let cpu_w = 76.0;
+        let mem_w = 140.0;
+        let age_w = 78.0;
+        let threads_w = 54.0;
+        let handles_w = 54.0;
+        let kill_w = 54.0;
+        let fixed = icon_w
+            + pid_w
+            + cpu_w
+            + mem_w
+            + age_w
+            + threads_w
+            + handles_w
+            + kill_w
+            + gap * 9.0;
+        let extra = (content.width() - fixed).max(250.0);
+        let path_w = (extra * 0.42).clamp(130.0, 320.0);
+        let name_w = (extra - path_w).max(130.0);
+        let table_width = fixed + path_w + name_w;
 
         let mut header_cell = |ui: &mut Ui, label: &str, width: f32, sort: ProcessSort, right: bool| {
             let active = current_sort == sort;
@@ -369,7 +390,9 @@ impl Dashboard {
             }
         };
         child.horizontal(|ui| {
+            ui.add_space(icon_w);
             header_cell(ui, "名称", name_w, ProcessSort::Name, false);
+            table_text(ui, path_w, "路径", 9.5, theme.faint, false);
             header_cell(ui, "PID", pid_w, ProcessSort::Pid, true);
             header_cell(ui, "CPU", cpu_w, ProcessSort::Cpu, true);
             header_cell(ui, "内存", mem_w, ProcessSort::Memory, true);
@@ -395,10 +418,7 @@ impl Dashboard {
             let order = match sort {
                 ProcessSort::Cpu => a.cpu_percent.total_cmp(&b.cpu_percent),
                 ProcessSort::Memory => a.private_bytes.cmp(&b.private_bytes),
-                ProcessSort::Name => a
-                    .name
-                    .to_lowercase()
-                    .cmp(&b.name.to_lowercase()),
+                ProcessSort::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
                 ProcessSort::Pid => a.pid.cmp(&b.pid),
                 ProcessSort::Age => a.age_secs.cmp(&b.age_secs),
                 ProcessSort::Threads => a.threads.cmp(&b.threads),
@@ -411,72 +431,217 @@ impl Dashboard {
             }
         });
 
+        let selected_pid = if self.process_selected_auto {
+            rows.first().map(|entry| entry.pid)
+        } else {
+            self.process_selected
+                .filter(|pid| rows.iter().any(|entry| entry.pid == *pid))
+                .or_else(|| rows.first().map(|entry| entry.pid))
+        };
+        let mut select_request = None;
+        let mut kill_request = None;
+        let max_memory = rows
+            .iter()
+            .map(|entry| entry.private_bytes)
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let mut paths = std::mem::take(&mut self.process_paths);
+        let mut process_icons = std::mem::take(&mut self.process_icons);
+        let ctx = ui.ctx().clone();
+        let row_height = 28.0;
+
         child.label(
             RichText::new(format!("显示 {} / {} 个进程", rows.len(), total))
                 .size(9.5)
                 .color(theme.faint),
         );
-
-        let mut kill_request = None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show_rows(&mut child, 22.0, rows.len(), |ui, range| {
+            .show_rows(&mut child, row_height, rows.len(), |ui, range| {
                 for index in range {
                     let entry = rows[index];
-                    ui.horizontal(|ui| {
-                        let name = format::truncate(&entry.name, (name_w / 6.4) as usize);
-                        table_text(ui, name_w, &name, 10.5, theme.text, false);
-                        table_text(ui, pid_w, &entry.pid.to_string(), 10.5, theme.dim, true);
-                        table_text(
-                            ui,
-                            cpu_w,
-                            &format!("{:.1}%", entry.cpu_percent),
-                            10.5,
-                            theme.load(entry.cpu_percent),
-                            true,
+                    let path = cached_path(&mut paths, entry.pid, entry.create_time);
+                    let icon = path
+                        .as_deref()
+                        .and_then(|path| cached_icon(&ctx, &mut process_icons, path));
+                    let (row_rect, response) =
+                        ui.allocate_exact_size(vec2(table_width, row_height), Sense::click());
+                    let selected = selected_pid == Some(entry.pid);
+                    let hovered = response.hovered();
+                    if response.clicked() {
+                        select_request = Some(entry.pid);
+                    }
+                    if hovered {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    let background = if selected {
+                        Theme::alpha(theme.accent, 28)
+                    } else if hovered {
+                        Theme::alpha(theme.accent, 12)
+                    } else if index % 2 == 0 {
+                        Theme::alpha(theme.grid, 20)
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    if background != Color32::TRANSPARENT {
+                        ui.painter()
+                            .rect_filled(row_rect, CornerRadius::same(6), background);
+                    }
+                    if selected {
+                        let bar = Rect::from_min_size(
+                            pos2(row_rect.left(), row_rect.top() + 4.0),
+                            vec2(2.5, row_rect.height() - 8.0),
                         );
-                        table_text(
-                            ui,
-                            mem_w,
-                            &format::bytes(entry.private_bytes),
-                            10.5,
-                            theme.dim,
-                            true,
+                        ui.painter()
+                            .rect_filled(bar, CornerRadius::same(2), theme.accent);
+                    }
+
+                    let center = row_rect.center().y;
+                    let mut x = row_rect.left() + 6.0;
+                    let icon_rect =
+                        Rect::from_center_size(pos2(x + 10.0, center), vec2(18.0, 18.0));
+                    ui.painter().rect_filled(
+                        icon_rect.expand(1.5),
+                        CornerRadius::same(5),
+                        Theme::alpha(theme.grid, 45),
+                    );
+                    if let Some(icon) = icon {
+                        ui.painter().image(
+                            icon.id(),
+                            icon_rect,
+                            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                            Color32::WHITE,
                         );
-                        table_text(
-                            ui,
-                            age_w,
-                            &format_age(entry.age_secs),
-                            10.5,
-                            theme.dim,
-                            true,
+                    } else {
+                        paint_fallback_icon(ui.painter(), icon_rect, &entry.name, theme);
+                    }
+                    x += icon_w;
+
+                    let name = format::truncate(&entry.name, (name_w / 6.2) as usize);
+                    ui.painter().text(
+                        pos2(x + 2.0, center),
+                        Align2::LEFT_CENTER,
+                        name,
+                        FontId::proportional(11.0),
+                        theme.text,
+                    );
+                    x += name_w + gap;
+
+                    let path_text = path
+                        .as_deref()
+                        .map(|path| format::truncate(path, (path_w / 5.8) as usize))
+                        .unwrap_or_else(|| "—".to_string());
+                    ui.painter().text(
+                        pos2(x + 2.0, center),
+                        Align2::LEFT_CENTER,
+                        path_text,
+                        FontId::proportional(9.5),
+                        if selected { theme.dim } else { theme.faint },
+                    );
+                    x += path_w + gap;
+
+                    ui.painter().text(
+                        pos2(x + pid_w - 2.0, center),
+                        Align2::RIGHT_CENTER,
+                        entry.pid.to_string(),
+                        FontId::proportional(10.0),
+                        if selected { theme.text } else { theme.dim },
+                    );
+                    x += pid_w + gap;
+
+                    let cpu_color = theme.load(entry.cpu_percent);
+                    let pill = Rect::from_center_size(
+                        pos2(x + cpu_w * 0.5, center),
+                        vec2(cpu_w, 18.0),
+                    );
+                    ui.painter().rect_filled(
+                        pill,
+                        CornerRadius::same(7),
+                        Theme::alpha(cpu_color, 28),
+                    );
+                    ui.painter().text(
+                        pill.center(),
+                        Align2::CENTER_CENTER,
+                        format!("{:.1}%", entry.cpu_percent),
+                        FontId::proportional(10.0),
+                        cpu_color,
+                    );
+                    x += cpu_w + gap;
+
+                    ui.painter().text(
+                        pos2(x + mem_w - 2.0, center - 5.0),
+                        Align2::RIGHT_CENTER,
+                        format::bytes(entry.private_bytes),
+                        FontId::proportional(10.0),
+                        if selected { theme.text } else { theme.dim },
+                    );
+                    let fraction = (entry.private_bytes as f32 / max_memory as f32).clamp(0.0, 1.0);
+                    let track = Rect::from_min_size(
+                        pos2(x + 2.0, center + 7.0),
+                        vec2(mem_w - 4.0, 3.0),
+                    );
+                    ui.painter()
+                        .rect_filled(track, CornerRadius::same(2), theme.grid);
+                    if fraction > 0.0 {
+                        let fill = Rect::from_min_size(
+                            track.min,
+                            vec2(track.width() * fraction, track.height()),
                         );
-                        table_text(
-                            ui,
-                            threads_w,
-                            &entry.threads.to_string(),
-                            10.5,
-                            theme.faint,
-                            true,
-                        );
-                        table_text(
-                            ui,
-                            handles_w,
-                            &entry.handles.to_string(),
-                            10.5,
-                            theme.faint,
-                            true,
-                        );
-                        if ui
-                            .add_sized([kill_w, 20.0], egui::Button::new("结束").small())
-                            .clicked()
-                        {
-                            kill_request = Some(entry.pid);
-                        }
-                    });
+                        ui.painter()
+                            .rect_filled(fill, CornerRadius::same(2), theme.memory);
+                    }
+                    x += mem_w + gap;
+
+                    ui.painter().text(
+                        pos2(x + age_w - 2.0, center),
+                        Align2::RIGHT_CENTER,
+                        format_age(entry.age_secs),
+                        FontId::proportional(10.0),
+                        theme.dim,
+                    );
+                    x += age_w + gap;
+                    ui.painter().text(
+                        pos2(x + threads_w - 2.0, center),
+                        Align2::RIGHT_CENTER,
+                        entry.threads.to_string(),
+                        FontId::proportional(10.0),
+                        theme.faint,
+                    );
+                    x += threads_w + gap;
+                    ui.painter().text(
+                        pos2(x + handles_w - 2.0, center),
+                        Align2::RIGHT_CENTER,
+                        entry.handles.to_string(),
+                        FontId::proportional(10.0),
+                        theme.faint,
+                    );
+                    x += handles_w + gap;
+
+                    let kill_rect = Rect::from_center_size(
+                        pos2(x + kill_w * 0.5, center),
+                        vec2(kill_w, 20.0),
+                    );
+                    let button = egui::Button::new(
+                        RichText::new("结束").size(9.5).color(theme.bad),
+                    )
+                    .fill(Theme::alpha(theme.bad, 10))
+                    .stroke(Stroke::new(1.0, Theme::alpha(theme.bad, 60)))
+                    .corner_radius(6.0);
+                    if ui.put(kill_rect, button).clicked() {
+                        kill_request = Some(entry.pid);
+                    }
                 }
             });
 
+        self.process_paths = paths;
+        self.process_icons = process_icons;
+        if let Some(pid) = select_request {
+            self.process_selected = Some(pid);
+            self.process_selected_auto = false;
+        } else {
+            self.process_selected = selected_pid;
+        }
         if let Some((sort, ascending)) = sort_request {
             self.process_sort = sort;
             self.process_ascending = ascending;
@@ -499,15 +664,42 @@ impl Dashboard {
                 .unwrap_or_else(|| format!("PID {pid}"));
             let mut confirm = false;
             let mut cancel = false;
+            let dialog = egui::Frame::new()
+                .fill(theme.card)
+                .stroke(Stroke::new(1.0, theme.border))
+                .corner_radius(12.0)
+                .inner_margin(egui::Margin::symmetric(18, 14));
             egui::Window::new("结束进程")
                 .id(Id::unique("monitor-kill-confirm"))
+                .title_bar(false)
+                .frame(dialog)
                 .collapsible(false)
                 .resizable(false)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| {
-                    ui.label(format!("确定结束 {name}（PID {pid}）？"));
                     ui.horizontal(|ui| {
-                        if ui.button("结束").clicked() {
+                        ui.label(RichText::new("●").size(12.0).color(theme.bad));
+                        ui.label(
+                            RichText::new("结束进程")
+                                .size(14.0)
+                                .strong()
+                                .color(theme.text),
+                        );
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!("确定结束 {name}（PID {pid}）？"))
+                            .size(11.0)
+                            .color(theme.dim),
+                    );
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        let end = egui::Button::new(
+                            RichText::new("结束").size(11.0).color(theme.bad),
+                        )
+                        .fill(Theme::alpha(theme.bad, 16))
+                        .stroke(Stroke::new(1.0, Theme::alpha(theme.bad, 60)));
+                        if ui.add(end).clicked() {
                             confirm = true;
                         }
                         if ui.button("取消").clicked() {
@@ -532,7 +724,6 @@ impl Dashboard {
             }
         }
     }
-
     fn footer(&self, ui: &mut Ui, rect: Rect, theme: &Theme) {
         let snap = &self.sampler.model.snap;
         let painter = ui.painter_at(rect);
@@ -1277,6 +1468,78 @@ fn format_age(seconds: u64) -> String {
     } else {
         format!("{}天{}时", seconds / 86_400, seconds % 86_400 / 3_600)
     }
+}
+
+fn stat_pill(ui: &mut Ui, label: &str, color: Color32) {
+    egui::Frame::new()
+        .fill(Theme::alpha(color, 18))
+        .corner_radius(9.0)
+        .inner_margin(egui::Margin::symmetric(8, 2))
+        .show(ui, |ui| {
+            ui.label(RichText::new(label).size(9.5).color(color));
+        });
+}
+
+fn cached_path(
+    cache: &mut HashMap<u32, (u64, Option<String>)>,
+    pid: u32,
+    create_time: u64,
+) -> Option<String> {
+    if let Some((stamp, path)) = cache.get(&pid) {
+        if *stamp == create_time {
+            return path.clone();
+        }
+    }
+    let path = process::image_path(pid);
+    cache.insert(pid, (create_time, path.clone()));
+    path
+}
+
+fn cached_icon(
+    ctx: &egui::Context,
+    cache: &mut HashMap<String, Option<TextureHandle>>,
+    path: &str,
+) -> Option<TextureHandle> {
+    if let Some(entry) = cache.get(path) {
+        return entry.clone();
+    }
+    let handle = icons::load(path).map(|image| {
+        ctx.load_texture(path.to_string(), image, egui::TextureOptions::LINEAR)
+    });
+    cache.insert(path.to_string(), handle.clone());
+    handle
+}
+
+fn paint_fallback_icon(painter: &Painter, rect: Rect, name: &str, theme: &Theme) {
+    let color = process_color(name, theme);
+    painter.circle_filled(rect.center(), rect.width() * 0.5, Theme::alpha(color, 36));
+    let initial = name
+        .chars()
+        .next()
+        .map(|ch| ch.to_uppercase().collect::<String>())
+        .unwrap_or_else(|| "?".to_string());
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        initial,
+        FontId::proportional(9.5),
+        color,
+    );
+}
+
+fn process_color(name: &str, theme: &Theme) -> Color32 {
+    let hash = name.bytes().fold(0u32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(byte as u32)
+    });
+    let colors = [
+        theme.accent,
+        theme.cpu,
+        theme.memory,
+        theme.disk,
+        theme.net,
+        theme.temp,
+    ];
+    colors[hash as usize % colors.len()]
 }
 
 fn card(ui: &mut Ui, rect: Rect, theme: &Theme, title: &str, subtitle: &str, accent: Color32) -> Rect {

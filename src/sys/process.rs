@@ -234,6 +234,31 @@ fn read_usize(data: &[u8], offset: usize) -> usize {
     usize::from_ne_bytes(bytes)
 }
 
+/// Best-effort executable path for icons / the details panel.
+pub fn image_path(pid: u32) -> Option<String> {
+    let handle = unsafe {
+        ffi::OpenProcess(ffi::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)
+    };
+    if handle.is_null() {
+        return None;
+    }
+    let mut buffer = [0u16; 1024];
+    let mut size = buffer.len() as u32;
+    let ok = unsafe {
+        ffi::QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size)
+    };
+    unsafe { ffi::CloseHandle(handle) };
+    if ok == 0 || size == 0 {
+        return None;
+    }
+    let path = super::from_wide(&buffer[..size as usize]);
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
 /// Terminate one process. Returns a user-facing Chinese error on failure.
 pub fn kill(pid: u32) -> Result<(), String> {
     if pid == u32::MAX || pid == 0 {
