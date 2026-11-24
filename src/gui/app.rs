@@ -472,7 +472,9 @@ impl Dashboard {
                 ""
             };
             let color = if active { theme.accent } else { theme.dim };
-            let (pos, anchor) = if *right {
+            let (pos, anchor) = if index == 3 {
+                (col.center(), Align2::CENTER_CENTER)
+            } else if *right {
                 (
                     pos2(col.right() - 2.0, col.center().y),
                     Align2::RIGHT_CENTER,
@@ -825,6 +827,8 @@ impl Dashboard {
             self.process_at = Instant::now();
         }
         if let Some(pid) = kill_request {
+            self.process_selected = Some(pid);
+            self.process_selected_auto = false;
             self.process_confirm = Some(pid);
         }
 
