@@ -196,6 +196,7 @@ monitor-gui --dark                       # 强制深色（--light 强制浅色�
 monitor-gui --lean                       # 不读温度与磁盘速率（同 TUI 的语义）
 monitor-gui --hardware                   # 直接打开硬件页
 monitor-gui --processes                  # 直接打开进程页
+monitor-gui --en                         # 以英文启动（--zh 强制中文）
 ```
 
 单进程、无 WebView、无 Node 工具链的 egui 窗口，六块卡片铺满整个窗口：
@@ -218,6 +219,14 @@ monitor-gui --processes                  # 直接打开进程页
 结束确认弹窗会压暗背景，显示进程图标、路径、CPU、内存、线程数和数据丢失提醒，危险按钮使用红色主操作：
 
 ![结束进程确认](docs/gui-kill-dialog.png)
+
+### 中英文切换
+
+GUI 右上角有 `中` / `EN` 按钮，点击即可切换语言；也可以按 `L`。启动参数 `--en` / `--zh` 可以指定初始语言。切换覆盖导航、卡片、进程页、硬件页、图表提示和结束确认弹窗。
+
+![English process page](docs/gui-process-en.png)
+
+> TUI（`monitor.exe`）目前仍保持中文；需要终端版双语的话可以继续扩展。
 
 图标走 Windows Shell（`SHGetFileInfoW`）+ GDI 转 RGBA 纹理，按 exe 路径缓存；受保护进程拿不到路径时退化为彩色首字母徽章，不会阻塞列表。路径和图标都在后台线程加载，滚动/拖滚动条时临时提升到 60fps 重绘，滚轮不再被同步 Shell 调用卡住。
 
@@ -243,7 +252,8 @@ monitor-gui --processes                  # 直接打开进程页
 | 进程页点击整行 | 选中高亮（默认选中当前 CPU 最高的进程；手动选中后保持） |
 | 进程页拖动表头分隔线 | 调整相邻两列宽度（总表宽不变，窗口缩放时按比例适配） |
 | 进程页搜索框 | 按进程名或 PID 过滤 |
-| 进程页 `结束` | 二次确认后调用 `TerminateProcess`，失败会显示中文原因 |
+| 进程页 `结束` | 二次确认后调用 `TerminateProcess`，失败会显示当前语言的原因 |
+| 右上角 `中` / `EN` 或 `L` | 切换 GUI 中英文 |
 | 悬停任意图表 | 十字线 + 时间与数值气泡 |
 | 点图例（读/写、下行/上行） | 临时隐藏该曲线 |
 | 右上角 `范围` | 1 / 5 / 15 分钟窗口 |

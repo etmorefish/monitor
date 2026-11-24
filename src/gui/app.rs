@@ -15,6 +15,7 @@ use eframe::egui::{
 
 use super::chart::{self, LineChart, Series, Unit};
 use super::icons;
+use super::lang;
 use super::theme::Theme;
 use super::throttle::{self, MouseThrottle};
 use crate::format;
@@ -133,6 +134,17 @@ impl Dashboard {
             .or_else(crate::sys::registry::system_is_dark)
             .unwrap_or(true);
         let lean = arguments.iter().any(|argument| argument == "--lean");
+        if arguments
+            .iter()
+            .any(|argument| argument == "--en" || argument == "--english")
+        {
+            lang::set(lang::Lang::En);
+        } else if arguments
+            .iter()
+            .any(|argument| argument == "--zh" || argument == "--chinese")
+        {
+            lang::set(lang::Lang::Zh);
+        }
         // Handy for screenshots and for opening straight on the details page.
         let page = if arguments.iter().any(|argument| argument == "--hardware") {
             Page::Hardware
@@ -237,8 +249,9 @@ impl Dashboard {
         );
         let uptime = if self.sampler.model.snap.uptime > 0 {
             format!(
-                "运行 {}",
-                crate::sys::host::uptime_human(self.sampler.model.snap.uptime)
+                "{} {}",
+                lang::t("运行", "up"),
+                lang::uptime(self.sampler.model.snap.uptime)
             )
         } else {
             String::new()
@@ -258,13 +271,17 @@ impl Dashboard {
         }
         if paused {
             ui.add_space(6.0);
-            ui.label(RichText::new("● 已暂停").size(10.5).color(theme.warn));
+            ui.label(
+                RichText::new(lang::t("● 已暂停", "● paused"))
+                    .size(10.5)
+                    .color(theme.warn),
+            );
         }
         ui.add_space(14.0);
         for (page, label) in [
-            (Page::Overview, "总览"),
-            (Page::Hardware, "硬件"),
-            (Page::Processes, "进程"),
+            (Page::Overview, lang::t("总览", "Overview")),
+            (Page::Hardware, lang::t("硬件", "Hardware")),
+            (Page::Processes, lang::t("进程", "Processes")),
         ] {
             if ui.selectable_label(self.page == page, label).clicked() {
                 self.page = page;
@@ -274,10 +291,31 @@ impl Dashboard {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(RichText::new(&stamp).size(11.5).color(theme.dim));
             ui.add_space(4.0);
-            if ui.button(if dark { "浅色" } else { "深色" }).clicked() {
+            if ui
+                .button(if dark {
+                    lang::t("浅色", "Light")
+                } else {
+                    lang::t("深色", "Dark")
+                })
+                .clicked()
+            {
                 self.dark = !self.dark;
             }
-            if ui.button(if paused { "继续" } else { "暂停" }).clicked() {
+            if ui
+                .button(if lang::is_en() { "EN" } else { "中" })
+                .on_hover_text(lang::t("切换语言", "Switch language"))
+                .clicked()
+            {
+                lang::toggle();
+            }
+            if ui
+                .button(if paused {
+                    lang::t("继续", "Resume")
+                } else {
+                    lang::t("暂停", "Pause")
+                })
+                .clicked()
+            {
                 self.paused = !self.paused;
             }
             for option in [5.0f64, 2.0, 1.0, 0.5] {
@@ -287,14 +325,26 @@ impl Dashboard {
                     self.sampler.model.interval = option;
                 }
             }
-            ui.label(RichText::new("刷新").size(9.5).color(theme.faint));
-            for (label, seconds) in [("15分", 900.0f64), ("5分", 300.0), ("1分", 60.0)] {
+            ui.label(
+                RichText::new(lang::t("刷新", "refresh"))
+                    .size(9.5)
+                    .color(theme.faint),
+            );
+            for (label, seconds) in [
+                (lang::t("15分", "15m"), 900.0f64),
+                (lang::t("5分", "5m"), 300.0),
+                (lang::t("1分", "1m"), 60.0),
+            ] {
                 let selected = (window - seconds).abs() < 1.0;
                 if ui.selectable_label(selected, label).clicked() {
                     self.window_secs = seconds;
                 }
             }
-            ui.label(RichText::new("范围").size(9.5).color(theme.faint));
+            ui.label(
+                RichText::new(lang::t("范围", "range"))
+                    .size(9.5)
+                    .color(theme.faint),
+            );
         });
     }
 
@@ -354,10 +404,20 @@ impl Dashboard {
     fn process_page(&mut self, ui: &mut Ui, body: Rect, theme: &Theme) {
         let total = self.processes.entries.len();
         let subtitle = format!(
-            "{} 进程 · {} 线程 · 5s 刷新",
-            total, self.processes.total_threads
+            "{} · {} · 5s {}",
+            if lang::is_en() {
+                format!("{total} processes")
+            } else {
+                format!("{total} 进程")
+            },
+            if lang::is_en() {
+                format!("{} threads", self.processes.total_threads)
+            } else {
+                format!("{} 线程", self.processes.total_threads)
+            },
+            lang::t("刷新", "refresh")
         );
-        let content = card(ui, body, theme, "进程", &subtitle, theme.accent);
+        let content = card(ui, body, theme, lang::t("进程", "Processes"), &subtitle, theme.accent);
         let mut child = ui.new_child(
             UiBuilder::new()
                 .max_rect(content)
@@ -377,7 +437,11 @@ impl Dashboard {
         let mut refresh = false;
         let mut sort_request: Option<(ProcessSort, bool)> = None;
         child.horizontal(|ui| {
-            ui.label(RichText::new("搜索").size(10.0).color(theme.dim));
+            ui.label(
+                RichText::new(lang::t("搜索", "Search"))
+                    .size(10.0)
+                    .color(theme.dim),
+            );
             egui::Frame::new()
                 .fill(theme.bg)
                 .stroke(Stroke::new(1.0, theme.border))
@@ -387,20 +451,28 @@ impl Dashboard {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.process_search)
                             .frame(egui::Frame::NONE)
-                            .hint_text("进程名 / PID")
+                            .hint_text(lang::t("进程名 / PID", "name / PID"))
                             .desired_width(220.0)
                             .font(FontId::proportional(12.0))
                             .text_color(theme.text),
                     );
                 });
-            if ui.button("刷新").clicked() {
+            if ui.button(lang::t("刷新", "Refresh")).clicked() {
                 refresh = true;
             }
             ui.add_space(6.0);
-            stat_pill(ui, &format!("{total} 进程"), theme.accent);
             stat_pill(
                 ui,
-                &format!("{} 线程", self.processes.total_threads),
+                &lang::count(total, "进程", "processes"),
+                theme.accent,
+            );
+            stat_pill(
+                ui,
+                &lang::count(
+                    self.processes.total_threads as usize,
+                    "线程",
+                    "threads",
+                ),
                 theme.dim,
             );
             if let Some((message, ok)) = &self.process_message {
@@ -429,9 +501,13 @@ impl Dashboard {
             })
             .count();
         child.label(
-            RichText::new(format!("显示 {visible_count} / {total} 个进程"))
-                .size(9.5)
-                .color(theme.faint),
+            RichText::new(if lang::is_en() {
+                format!("showing {visible_count} / {total} processes")
+            } else {
+                format!("显示 {visible_count} / {total} 个进程")
+            })
+            .size(9.5)
+            .color(theme.faint),
         );
 
         let table_width =
@@ -445,14 +521,14 @@ impl Dashboard {
             Theme::alpha(theme.grid, 16),
         );
         let headers: [(&str, Option<ProcessSort>, bool); 8] = [
-            ("名称", Some(ProcessSort::Name), false),
-            ("路径", None, false),
+            (lang::t("名称", "Name"), Some(ProcessSort::Name), false),
+            (lang::t("路径", "Path"), None, false),
             ("PID", Some(ProcessSort::Pid), true),
             ("CPU", Some(ProcessSort::Cpu), true),
-            ("内存", Some(ProcessSort::Memory), true),
-            ("启动", Some(ProcessSort::Age), true),
-            ("线程", Some(ProcessSort::Threads), true),
-            ("句柄", Some(ProcessSort::Handles), true),
+            (lang::t("内存", "Memory"), Some(ProcessSort::Memory), true),
+            (lang::t("启动", "Started"), Some(ProcessSort::Age), true),
+            (lang::t("线程", "Threads"), Some(ProcessSort::Threads), true),
+            (lang::t("句柄", "Handles"), Some(ProcessSort::Handles), true),
         ];
         let mut x = header_rect.left() + icon_w + gap;
         for (index, (label, sort, right)) in headers.iter().enumerate() {
@@ -798,7 +874,9 @@ impl Dashboard {
                         vec2(kill_w, 20.0),
                     );
                     let button = egui::Button::new(
-                        RichText::new("结束").size(9.5).color(theme.bad),
+                        RichText::new(lang::t("结束", "End"))
+                            .size(9.5)
+                            .color(theme.bad),
                     )
                     .fill(Theme::alpha(theme.bad, 10))
                     .stroke(Stroke::new(1.0, Theme::alpha(theme.bad, 60)))
@@ -885,7 +963,7 @@ impl Dashboard {
                         ui.add_space(10.0);
                         ui.vertical(|ui| {
                             ui.label(
-                                RichText::new("结束进程")
+                                RichText::new(lang::t("结束进程", "End process"))
                                     .size(10.5)
                                     .color(theme.bad),
                             );
@@ -921,14 +999,14 @@ impl Dashboard {
                         );
                         dialog_stat(
                             &mut columns[1],
-                            "内存",
+                            lang::t("内存", "Memory"),
                             &format::bytes(memory),
                             theme.memory,
                             theme,
                         );
                         dialog_stat(
                             &mut columns[2],
-                            "线程",
+                            lang::t("线程", "Threads"),
                             &threads.to_string(),
                             theme.dim,
                             theme,
@@ -942,22 +1020,30 @@ impl Dashboard {
                         .inner_margin(egui::Margin::symmetric(10, 7))
                         .show(ui, |ui| {
                             ui.label(
-                                RichText::new("结束后，该进程未保存的数据会丢失。")
-                                    .size(10.0)
-                                    .color(theme.warn),
+                                RichText::new(lang::t(
+                                    "结束后，该进程未保存的数据会丢失。",
+                                    "Unsaved data in this process will be lost.",
+                                ))
+                                .size(10.0)
+                                .color(theme.warn),
                             );
                         });
                     ui.add_space(12.0);
                     let button_width = (ui.available_width() - 8.0) * 0.5;
                     ui.horizontal(|ui| {
                         if ui
-                            .add_sized([button_width, 32.0], egui::Button::new("取消"))
+                            .add_sized(
+                                [button_width, 32.0],
+                                egui::Button::new(lang::t("取消", "Cancel")),
+                            )
                             .clicked()
                         {
                             cancel = true;
                         }
                         let end = egui::Button::new(
-                            RichText::new("结束进程").size(11.0).color(Color32::WHITE),
+                            RichText::new(lang::t("结束进程", "End process"))
+                                .size(11.0)
+                                .color(Color32::WHITE),
                         )
                         .fill(theme.bad)
                         .stroke(Stroke::new(1.0, theme.bad));
@@ -972,14 +1058,57 @@ impl Dashboard {
             if confirm {
                 match process::kill(pid) {
                     Ok(()) => {
-                        self.process_message = Some((format!("已结束 {name}（PID {pid}）"), true));
+                        self.process_message = Some((
+                            if lang::is_en() {
+                                format!("Ended {name} (PID {pid})")
+                            } else {
+                                format!("已结束 {name}（PID {pid}）")
+                            },
+                            true,
+                        ));
                         self.processes = self.process_sampler.sample();
                         self.process_at = Instant::now();
                         self.sampler.sample();
                         self.last_sample = Instant::now();
                     }
-                    Err(message) => {
-                        self.process_message = Some((format!("{name}：{message}"), false));
+                    Err(error) => {
+                        let reason = match error {
+                            process::KillError::Idle => lang::t(
+                                "系统进程不能结束",
+                                "system process cannot be ended",
+                            )
+                            .to_string(),
+                            process::KillError::SelfProcess => lang::t(
+                                "不能结束 monitor 自身",
+                                "cannot end monitor itself",
+                            )
+                            .to_string(),
+                            process::KillError::AccessDenied => lang::t(
+                                "拒绝访问（该进程可能需要管理员权限）",
+                                "access denied (administrator rights may be required)",
+                            )
+                            .to_string(),
+                            process::KillError::NotFound => lang::t(
+                                "进程不存在或已经退出",
+                                "process does not exist or has exited",
+                            )
+                            .to_string(),
+                            process::KillError::Other(code) => {
+                                if lang::is_en() {
+                                    format!("failed (Windows error {code})")
+                                } else {
+                                    format!("结束失败（Windows 错误 {code}）")
+                                }
+                            }
+                        };
+                        self.process_message = Some((
+                            if lang::is_en() {
+                                format!("{name}: {reason}")
+                            } else {
+                                format!("{name}：{reason}")
+                            },
+                            false,
+                        ));
                     }
                 }
                 self.process_confirm = None;
@@ -991,19 +1120,32 @@ impl Dashboard {
     fn footer(&self, ui: &mut Ui, rect: Rect, theme: &Theme) {
         let snap = &self.sampler.model.snap;
         let painter = ui.painter_at(rect);
-        let left = format!(
-            "自身 {}  ·  {:.2}% CPU  ·  采样 {}  ·  {:.1} 帧/秒",
-            format::bytes(snap.self_private),
-            snap.self_cpu,
-            format::micros(snap.tick_us),
-            self.fps
-        );
+        let left = if lang::is_en() {
+            format!(
+                "self {}  ·  {:.2}% CPU  ·  sample {}  ·  {:.1} fps",
+                format::bytes(snap.self_private),
+                snap.self_cpu,
+                format::micros(snap.tick_us),
+                self.fps
+            )
+        } else {
+            format!(
+                "自身 {}  ·  {:.2}% CPU  ·  采样 {}  ·  {:.1} 帧/秒",
+                format::bytes(snap.self_private),
+                snap.self_cpu,
+                format::micros(snap.tick_us),
+                self.fps
+            )
+        };
         text(&painter, pos2(rect.left(), rect.center().y), Align2::LEFT_CENTER, left, 10.0, theme.faint);
         text(
             &painter,
             pos2(rect.right(), rect.center().y),
             Align2::RIGHT_CENTER,
-            "空格 暂停  ·  T 主题  ·  悬停图表看数值",
+            lang::t(
+                "空格 暂停  ·  T 主题  ·  悬停图表看数值",
+                "space pause · T theme · hover charts for values",
+            ),
             10.0,
             theme.faint,
         );
@@ -1038,11 +1180,15 @@ impl eframe::App for Dashboard {
         }
         self.poll_icon_events(ui.ctx());
 
-        if ui.ctx().input(|input| input.key_pressed(egui::Key::Space)) {
+        let typing = ui.ctx().text_edit_focused();
+        if !typing && ui.ctx().input(|input| input.key_pressed(egui::Key::Space)) {
             self.paused = !self.paused;
         }
-        if ui.ctx().input(|input| input.key_pressed(egui::Key::T)) {
+        if !typing && ui.ctx().input(|input| input.key_pressed(egui::Key::T)) {
             self.dark = !self.dark;
+        }
+        if !typing && ui.ctx().input(|input| input.key_pressed(egui::Key::L)) {
+            lang::toggle();
         }
 
         let theme = self.theme();
@@ -1147,14 +1293,25 @@ fn cpu_card(
 
     // Topology and caches, the same set Task Manager lists.
     let cores = snap.cpu.physical.unwrap_or(snap.cpu.logical);
-    let info = format!(
-        "{} 核 / {} 线程 · L1 {} · L2 {} · L3 {}",
-        cores,
-        snap.cpu.logical,
-        format::bytes(snap.cpu.cache_l1),
-        format::bytes(snap.cpu.cache_l2),
-        format::bytes(snap.cpu.cache_l3),
-    );
+    let info = if lang::is_en() {
+        format!(
+            "{} cores / {} threads · L1 {} · L2 {} · L3 {}",
+            cores,
+            snap.cpu.logical,
+            format::bytes(snap.cpu.cache_l1),
+            format::bytes(snap.cpu.cache_l2),
+            format::bytes(snap.cpu.cache_l3),
+        )
+    } else {
+        format!(
+            "{} 核 / {} 线程 · L1 {} · L2 {} · L3 {}",
+            cores,
+            snap.cpu.logical,
+            format::bytes(snap.cpu.cache_l1),
+            format::bytes(snap.cpu.cache_l2),
+            format::bytes(snap.cpu.cache_l3),
+        )
+    };
     let legend_width = if content.width() > 460.0 { 150.0 } else { 0.0 };
     let text_width = ((content.width() - legend_width) / 5.8).max(16.0) as usize;
     text(
@@ -1177,7 +1334,7 @@ fn cpu_card(
             &painter,
             pos2(bar_left - 6.0, content.top() + 48.0),
             Align2::RIGHT_TOP,
-            "频率",
+            lang::t("频率", "Freq"),
             9.0,
             theme.faint,
         );
@@ -1237,8 +1394,8 @@ fn cpu_card(
 }
 
 fn memory_card(ui: &mut Ui, rect: Rect, theme: &Theme, snap: &Snapshot) {
-    let subtitle = format!("{} 进程", snap.memory.processes);
-    let content = card(ui, rect, theme, "内存", &subtitle, theme.memory);
+    let subtitle = lang::count(snap.memory.processes as usize, "进程", "processes");
+    let content = card(ui, rect, theme, lang::t("内存", "Memory"), &subtitle, theme.memory);
     if content.height() < 60.0 {
         return;
     }
@@ -1273,7 +1430,7 @@ fn memory_card(ui: &mut Ui, rect: Rect, theme: &Theme, snap: &Snapshot) {
         &painter,
         pos2(center.x, center.y + 15.0),
         Align2::CENTER_CENTER,
-        "已用",
+        lang::t("已用", "used"),
         9.0,
         theme.faint,
     );
@@ -1284,15 +1441,23 @@ fn memory_card(ui: &mut Ui, rect: Rect, theme: &Theme, snap: &Snapshot) {
         return;
     }
     let rows = [
-        ("已用", format::bytes(memory.used()), theme.memory),
-        ("缓存", format::bytes(cache as u64), theme.dim),
-        ("空闲", format::bytes(free as u64), theme.ok),
+        (lang::t("已用", "used"), format::bytes(memory.used()), theme.memory),
+        (lang::t("缓存", "cache"), format::bytes(cache as u64), theme.dim),
+        (lang::t("空闲", "free"), format::bytes(free as u64), theme.ok),
         (
-            "提交",
+            lang::t("提交", "commit"),
             format!("{} / {}", format::bytes(memory.commit), format::bytes(memory.commit_limit)),
             theme.text,
         ),
-        ("线程", format!("{} 个 · {} 句柄", memory.threads, memory.handles), theme.dim),
+        (
+            lang::t("线程", "threads"),
+            if lang::is_en() {
+                format!("{} · {} handles", memory.threads, memory.handles)
+            } else {
+                format!("{} 个 · {} 句柄", memory.threads, memory.handles)
+            },
+            theme.dim,
+        ),
     ];
     let row_height = 25.0;
     let start = content.center().y - rows.len() as f32 * row_height * 0.5 + row_height * 0.5;
@@ -1315,7 +1480,7 @@ fn disk_card(
     interval: f64,
     now: u32,
 ) {
-    let content = card(ui, rect, theme, "磁盘", "PhysicalDisk", theme.disk);
+    let content = card(ui, rect, theme, lang::t("磁盘", "Disk"), "PhysicalDisk", theme.disk);
     if content.height() < 90.0 {
         return;
     }
@@ -1370,12 +1535,12 @@ fn disk_card(
     }
 
     let mut x = content.left();
-    let read_chip = legend_chip(ui, &painter, pos2(x, y), "读", theme.io_read, toggles.read, theme, "legend-disk-read");
+    let read_chip = legend_chip(ui, &painter, pos2(x, y), lang::t("读", "read"), theme.io_read, toggles.read, theme, "legend-disk-read");
     if read_chip.clicked() {
         toggles.read = !toggles.read;
     }
     x = read_chip.rect.right() + 6.0;
-    let write_chip = legend_chip(ui, &painter, pos2(x, y), "写", theme.io_write, toggles.write, theme, "legend-disk-write");
+    let write_chip = legend_chip(ui, &painter, pos2(x, y), lang::t("写", "write"), theme.io_write, toggles.write, theme, "legend-disk-write");
     if write_chip.clicked() {
         toggles.write = !toggles.write;
     }
@@ -1391,12 +1556,12 @@ fn disk_card(
     let read_series = Series {
         values: history.io_read.slice(),
         color: theme.io_read,
-        label: "读",
+        label: lang::t("读", "read"),
     };
     let write_series = Series {
         values: history.io_write.slice(),
         color: theme.io_write,
-        label: "写",
+        label: lang::t("写", "write"),
     };
     let mut active: Vec<Series> = Vec::with_capacity(2);
     if toggles.read {
@@ -1448,7 +1613,7 @@ fn net_card(
             _ => name,
         }
     };
-    let content = card(ui, rect, theme, "网络", &subtitle, theme.net);
+    let content = card(ui, rect, theme, lang::t("网络", "Network"), &subtitle, theme.net);
     if content.height() < 90.0 {
         return;
     }
@@ -1476,18 +1641,22 @@ fn net_card(
         &painter,
         pos2(content.right(), content.top() + 2.0),
         Align2::RIGHT_TOP,
-        format!("累计 ↓{} ↑{}", format::bytes(interface.map_or(0, |net| net.rx_total)), format::bytes(interface.map_or(0, |net| net.tx_total))),
+        if lang::is_en() {
+            format!("total ↓{} ↑{}", format::bytes(interface.map_or(0, |net| net.rx_total)), format::bytes(interface.map_or(0, |net| net.tx_total)))
+        } else {
+            format!("累计 ↓{} ↑{}", format::bytes(interface.map_or(0, |net| net.rx_total)), format::bytes(interface.map_or(0, |net| net.tx_total)))
+        },
         9.0,
         theme.faint,
     );
 
     let mut x = content.left();
-    let rx_chip = legend_chip(ui, &painter, pos2(x, content.top() + 24.0), "下行", theme.net_rx, toggles.rx, theme, "legend-net-rx");
+    let rx_chip = legend_chip(ui, &painter, pos2(x, content.top() + 24.0), lang::t("下行", "down"), theme.net_rx, toggles.rx, theme, "legend-net-rx");
     if rx_chip.clicked() {
         toggles.rx = !toggles.rx;
     }
     x = rx_chip.rect.right() + 6.0;
-    let tx_chip = legend_chip(ui, &painter, pos2(x, content.top() + 24.0), "上行", theme.net_tx, toggles.tx, theme, "legend-net-tx");
+    let tx_chip = legend_chip(ui, &painter, pos2(x, content.top() + 24.0), lang::t("上行", "up"), theme.net_tx, toggles.tx, theme, "legend-net-tx");
     if tx_chip.clicked() {
         toggles.tx = !toggles.tx;
     }
@@ -1502,12 +1671,12 @@ fn net_card(
         let rx_series = Series {
             values: history.net_rx.slice(),
             color: theme.net_rx,
-            label: "下行",
+            label: lang::t("下行", "down"),
         };
         let tx_series = Series {
             values: history.net_tx.slice(),
             color: theme.net_tx,
-            label: "上行",
+            label: lang::t("上行", "up"),
         };
         let mut active: Vec<Series> = Vec::with_capacity(2);
         if toggles.rx {
@@ -1581,7 +1750,7 @@ fn thermal_card(
     interval: f64,
     now: u32,
 ) {
-    let content = card(ui, rect, theme, "散热", "ACPI", theme.temp);
+    let content = card(ui, rect, theme, lang::t("散热", "Thermals"), "ACPI", theme.temp);
     if content.height() < 90.0 {
         return;
     }
@@ -1614,7 +1783,11 @@ fn thermal_card(
                 &painter,
                 content.left_top(),
                 Align2::LEFT_TOP,
-                if snap.counters_enabled { "不可用" } else { "已关闭" },
+                if snap.counters_enabled {
+                    lang::t("不可用", "unavailable")
+                } else {
+                    lang::t("已关闭", "disabled")
+                },
                 16.0,
                 theme.faint,
             );
@@ -1631,7 +1804,7 @@ fn thermal_card(
         let series = [Series {
             values: history.temp.slice(),
             color: theme.temp,
-            label: "温度",
+            label: lang::t("温度", "temp"),
         }];
         chart::line_chart(
             ui,
@@ -1654,7 +1827,7 @@ fn thermal_card(
     let mut y = content.bottom() - footer_height + 8.0;
     match snap.fans.first() {
         Some(fan) => {
-            text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, "风扇", 9.5, theme.faint);
+            text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, lang::t("风扇", "fan"), 9.5, theme.faint);
             text(
                 &painter,
                 pos2(content.right(), y),
@@ -1665,12 +1838,12 @@ fn thermal_card(
             );
         }
         None => {
-            text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, "风扇", 9.5, theme.faint);
+            text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, lang::t("风扇", "fan"), 9.5, theme.faint);
             text(
                 &painter,
                 pos2(content.right(), y),
                 Align2::RIGHT_TOP,
-                "—  固件未暴露",
+                lang::t("—  固件未暴露", "—  firmware unavailable"),
                 9.5,
                 theme.faint,
             );
@@ -1682,12 +1855,12 @@ fn thermal_card(
         Some(power) if power.available() => {
             let percent = power.battery_percent.unwrap_or(0) as f32;
             let state = match power.state {
-                crate::sys::power::BatteryState::Charging => "充电中",
-                crate::sys::power::BatteryState::Discharging => "放电中",
-                crate::sys::power::BatteryState::Idle => "交流供电",
+                crate::sys::power::BatteryState::Charging => lang::t("充电中", "charging"),
+                crate::sys::power::BatteryState::Discharging => lang::t("放电中", "discharging"),
+                crate::sys::power::BatteryState::Idle => lang::t("交流供电", "AC power"),
                 _ => "",
             };
-            text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, "电池", 9.5, theme.faint);
+            text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, lang::t("电池", "battery"), 9.5, theme.faint);
             text(
                 &painter,
                 pos2(content.right(), y),
@@ -1700,7 +1873,7 @@ fn thermal_card(
             chart::hbar(&painter, bar, percent / 100.0, theme.battery, theme.grid);
         }
         _ => {
-            text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, "电池", 9.5, theme.faint);
+            text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, lang::t("电池", "battery"), 9.5, theme.faint);
             text(&painter, pos2(content.right(), y), Align2::RIGHT_TOP, "—", 10.5, theme.faint);
         }
     }
@@ -1753,15 +1926,7 @@ fn resize_process_widths(widths: &mut [f32; 8], boundary: usize, delta: f32) {
 }
 
 fn format_age(seconds: u64) -> String {
-    if seconds < 60 {
-        "刚刚".to_string()
-    } else if seconds < 3_600 {
-        format!("{}分", seconds / 60)
-    } else if seconds < 86_400 {
-        format!("{}时{}分", seconds / 3_600, seconds % 3_600 / 60)
-    } else {
-        format!("{}天{}时", seconds / 86_400, seconds % 86_400 / 3_600)
-    }
+    lang::age(seconds)
 }
 
 fn paint_process_summary(
@@ -1786,7 +1951,7 @@ fn paint_process_summary(
         painter,
         pos2(cpu_rect.left() + 12.0, cpu_rect.top() + 7.0),
         Align2::LEFT_TOP,
-        "CPU 总占用",
+        lang::t("CPU 总占用", "CPU total"),
         9.5,
         theme.dim,
     );
@@ -1815,7 +1980,7 @@ fn paint_process_summary(
         painter,
         pos2(mem_rect.left() + 12.0, mem_rect.top() + 7.0),
         Align2::LEFT_TOP,
-        "内存",
+        lang::t("内存", "Memory"),
         9.5,
         theme.dim,
     );
@@ -2173,7 +2338,7 @@ fn gpu_card(ui: &mut Ui, rect: Rect, theme: &Theme, gpus: &[Gpu]) {
         &painter,
         pos2(content.left() + 76.0, y + 22.0),
         Align2::LEFT_TOP,
-        "利用率",
+        lang::t("利用率", "load"),
         10.0,
         theme.dim,
     );
@@ -2182,9 +2347,17 @@ fn gpu_card(ui: &mut Ui, rect: Rect, theme: &Theme, gpus: &[Gpu]) {
     y += 54.0;
 
     let (memory_label, memory_used, memory_limit) = if first.dedicated_limit > 0 {
-        ("专用显存", first.dedicated_used, first.dedicated_limit)
+        (
+            lang::t("专用显存", "dedicated"),
+            first.dedicated_used,
+            first.dedicated_limit,
+        )
     } else {
-        ("共享显存", first.shared_used, 0)
+        (
+            lang::t("共享显存", "shared"),
+            first.shared_used,
+            0,
+        )
     };
     text(
         &painter,
@@ -2224,7 +2397,7 @@ fn gpu_card(ui: &mut Ui, rect: Rect, theme: &Theme, gpus: &[Gpu]) {
             &painter,
             pos2(content.left(), y),
             Align2::LEFT_TOP,
-            "共享显存",
+            lang::t("共享显存", "shared"),
             9.5,
             theme.faint,
         );
@@ -2243,7 +2416,7 @@ fn gpu_card(ui: &mut Ui, rect: Rect, theme: &Theme, gpus: &[Gpu]) {
         &painter,
         pos2(content.left(), y),
         Align2::LEFT_TOP,
-        "引擎",
+        lang::t("引擎", "engines"),
         9.5,
         theme.faint,
     );
@@ -2267,7 +2440,11 @@ fn gpu_card(ui: &mut Ui, rect: Rect, theme: &Theme, gpus: &[Gpu]) {
             &painter,
             pos2(content.left(), content.bottom() - 2.0),
             Align2::LEFT_BOTTOM,
-            format!("+{} 个适配器", gpus.len() - 1),
+            if lang::is_en() {
+                format!("+{} adapters", gpus.len() - 1)
+            } else {
+                format!("+{} 个适配器", gpus.len() - 1)
+            },
             9.0,
             theme.faint,
         );
@@ -2309,27 +2486,32 @@ fn hardware_page(
     );
 
     // Board + BIOS
-    let content = card(ui, top_left, theme, "主板与 BIOS", &hardware.board_product, theme.cpu);
+    let content = card(ui, top_left, theme, lang::t("主板与 BIOS", "Board & BIOS"), &hardware.board_product, theme.cpu);
     let painter = ui.painter_at(content);
     let mut y = content.top() + 10.0;
     let mut row = |label: &str, value: &str| {
         info_row(&painter, content, y, theme, label, value);
         y += 34.0;
     };
-    row("主板", &format!("{} {}", hardware.board_vendor, hardware.board_product));
-    row("板型版本", &hardware.board_version);
+    row(lang::t("主板", "board"), &format!("{} {}", hardware.board_vendor, hardware.board_product));
+    row(lang::t("板型版本", "revision"), &hardware.board_version);
     row("BIOS", &format!("{} {}", hardware.bios_vendor, hardware.bios_version));
-    row("发布日期", &hardware.bios_date);
+    row(lang::t("发布日期", "release"), &hardware.bios_date);
     row("SMBIOS", &hardware.smbios_version);
-    row(
-        "内存插槽",
-        &format!("{}/{} 已用", hardware.slots_used(), hardware.slots_total),
-    );
+    let slots = if lang::is_en() {
+        format!("{} / {} used", hardware.slots_used(), hardware.slots_total)
+    } else {
+        format!("{}/{} 已用", hardware.slots_used(), hardware.slots_total)
+    };
+    row(lang::t("内存插槽", "slots"), &slots);
     text(
         &painter,
         pos2(content.left(), content.bottom() - 4.0),
         Align2::LEFT_BOTTOM,
-        "来源：SMBIOS 固件表 / 存储设备描述 / 注册表，免管理员",
+        lang::t(
+            "来源：SMBIOS 固件表 / 存储设备描述 / 注册表，免管理员",
+            "Source: SMBIOS / storage descriptors / registry, no admin required",
+        ),
         9.0,
         theme.faint,
     );
@@ -2339,19 +2521,26 @@ fn hardware_page(
     }
 
     // Memory modules
-    let content = card(ui, top_right, theme, "内存", &format!("{} 条", hardware.modules.len()), theme.memory);
+    let content = card(
+        ui,
+        top_right,
+        theme,
+        lang::t("内存", "Memory"),
+        &lang::count(hardware.modules.len(), "条", "modules"),
+        theme.memory,
+    );
     let painter = ui.painter_at(content);
     let mut y = content.top() + 6.0;
     let speed = hardware.modules.iter().map(|module| module.speed_mts).max().unwrap_or(0);
     let kind = hardware.modules.first().map(|module| module.kind.clone()).unwrap_or_default();
-    info_row(&painter, content, y, theme, "总容量", &format::bytes(hardware.memory_total()));
+    info_row(&painter, content, y, theme, lang::t("总容量", "capacity"), &format::bytes(hardware.memory_total()));
     y += 30.0;
     info_row(
         &painter,
         content,
         y,
         theme,
-        "类型 / 速度",
+        lang::t("类型 / 速度", "type / speed"),
         &format!("{kind} {speed} MT/s"),
     );
     y += 30.0;
@@ -2360,12 +2549,12 @@ fn hardware_page(
         content,
         y,
         theme,
-        "插槽",
+        lang::t("插槽", "slots"),
         &format!("{}/{}", hardware.slots_used(), hardware.slots_total),
     );
     y += 34.0;
 
-    text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, "每条明细", 9.0, theme.faint);
+    text(&painter, pos2(content.left(), y), Align2::LEFT_TOP, lang::t("每条明细", "modules"), 9.0, theme.faint);
     y += 20.0;
     for module in hardware.modules.iter().take(8) {
         let label = format!(
@@ -2386,7 +2575,7 @@ fn hardware_page(
     }
 
     // Storage
-    let content = card(ui, bottom_left, theme, "存储", "", theme.disk);
+    let content = card(ui, bottom_left, theme, lang::t("存储", "Storage"), "", theme.disk);
     let painter = ui.painter_at(content);
     let mut y = content.top() + 6.0;
     for model in hardware.disks.iter().take(4) {
@@ -2414,7 +2603,7 @@ fn hardware_page(
     }
 
     // Network
-    let content = card(ui, bottom_right, theme, "网络", "", theme.net);
+    let content = card(ui, bottom_right, theme, lang::t("网络", "Network"), "", theme.net);
     let painter = ui.painter_at(content);
     let mut y = content.top() + 4.0;
     for net in snap.nets.iter().filter(|net| net.up).take(3) {
@@ -2439,7 +2628,7 @@ fn hardware_page(
             painter.text(
                 pos2(speed_rect.right() + 8.0, y),
                 Align2::LEFT_TOP,
-                "未获取到 IPv4",
+                lang::t("未获取到 IPv4", "no IPv4 address"),
                 FontId::proportional(9.5),
                 theme.faint,
             );
@@ -2461,14 +2650,25 @@ fn hardware_page(
 
     match &snap.wifi {
         Some(wifi) => {
-            let label = format!(
-                "{} · 信号 {}% · {} · ↓{} ↑{}",
-                wifi.ssid,
-                wifi.signal,
-                wifi.phy,
-                rate_from_kbps(wifi.rx_kbps),
-                rate_from_kbps(wifi.tx_kbps)
-            );
+            let label = if lang::is_en() {
+                format!(
+                    "{} · signal {}% · {} · ↓{} ↑{}",
+                    wifi.ssid,
+                    wifi.signal,
+                    wifi.phy,
+                    rate_from_kbps(wifi.rx_kbps),
+                    rate_from_kbps(wifi.tx_kbps)
+                )
+            } else {
+                format!(
+                    "{} · 信号 {}% · {} · ↓{} ↑{}",
+                    wifi.ssid,
+                    wifi.signal,
+                    wifi.phy,
+                    rate_from_kbps(wifi.rx_kbps),
+                    rate_from_kbps(wifi.tx_kbps)
+                )
+            };
             text(
                 &painter,
                 pos2(content.left(), y + 4.0),
@@ -2483,7 +2683,7 @@ fn hardware_page(
                 let hint = painter.text(
                     pos2(content.left(), y + 6.0),
                     Align2::LEFT_TOP,
-                    "Wi-Fi 名称需要定位权限",
+                    lang::t("Wi-Fi 名称需要定位权限", "Wi-Fi name needs location permission"),
                     FontId::proportional(9.5),
                     theme.faint,
                 );
@@ -2492,7 +2692,7 @@ fn hardware_page(
                     &painter,
                     pos2(hint.right() + 8.0, y + 2.0),
                     Align2::LEFT_TOP,
-                    "打开定位设置",
+                    lang::t("打开定位设置", "Open location settings"),
                     theme.accent,
                 );
                 if button.clicked() {
@@ -2545,7 +2745,11 @@ fn copy_chip(
     theme: &Theme,
     copied: &mut Option<(String, Instant)>,
 ) {
-    let label = format!("{value}  复制");
+    let label = if lang::is_en() {
+        format!("{value}  copy")
+    } else {
+        format!("{value}  复制")
+    };
     let galley = painter.layout_no_wrap(label.clone(), FontId::proportional(size), color);
     let rect = anchor.anchor_size(pos, galley.size() + vec2(34.0, 10.0));
     let response = ui.put(
@@ -2563,7 +2767,7 @@ fn copy_chip(
             painter.text(
                 pos2(rect.right() + 6.0, rect.center().y),
                 Align2::LEFT_CENTER,
-                "已复制",
+                lang::t("已复制", "copied"),
                 FontId::proportional(9.0),
                 theme.ok,
             );

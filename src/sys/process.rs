@@ -259,13 +259,22 @@ pub fn image_path(pid: u32) -> Option<String> {
     }
 }
 
-/// Terminate one process. Returns a user-facing Chinese error on failure.
-pub fn kill(pid: u32) -> Result<(), String> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KillError {
+    Idle,
+    SelfProcess,
+    AccessDenied,
+    NotFound,
+    Other(u32),
+}
+
+/// Terminate one process.
+pub fn kill(pid: u32) -> Result<(), KillError> {
     if pid == u32::MAX || pid == 0 {
-        return Err("系统进程不能结束".to_string());
+        return Err(KillError::Idle);
     }
     if pid == std::process::id() {
-        return Err("不能结束 monitor 自身".to_string());
+        return Err(KillError::SelfProcess);
     }
     let handle = unsafe {
         ffi::OpenProcess(
@@ -275,27 +284,27 @@ pub fn kill(pid: u32) -> Result<(), String> {
         )
     };
     if handle.is_null() {
-        return Err(win_error("打开进程"));
+        return Err(win_error());
     }
     let ok = unsafe { ffi::TerminateProcess(handle, 1) };
     let error = if ok == 0 {
-        Some(win_error("结束进程"))
+        Some(win_error())
     } else {
         None
     };
     unsafe { ffi::CloseHandle(handle) };
     match error {
-        Some(message) => Err(message),
+        Some(error) => Err(error),
         None => Ok(()),
     }
 }
 
-fn win_error(action: &str) -> String {
+fn win_error() -> KillError {
     let code = unsafe { ffi::GetLastError() };
     match code {
-        5 => "拒绝访问（该进程可能需要管理员权限）".to_string(),
-        87 | 1168 => "进程不存在或已经退出".to_string(),
-        _ => format!("{action}失败（Windows 错误 {code}）"),
+        5 => KillError::AccessDenied,
+        87 | 1168 => KillError::NotFound,
+        other => KillError::Other(other),
     }
 }
 

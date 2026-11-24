@@ -6,6 +6,7 @@
 pub mod app;
 pub mod font;
 pub mod icons;
+pub mod lang;
 pub mod chart;
 pub mod theme;
 pub mod throttle;

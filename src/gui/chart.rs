@@ -10,6 +10,7 @@ use eframe::egui::{
 };
 
 use super::theme::Theme;
+use super::lang;
 use crate::format;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -147,7 +148,7 @@ pub fn line_chart(ui: &mut Ui, rect: Rect, theme: &Theme, chart: &LineChart, id:
     painter.text(
         pos2(plot.right(), plot.bottom() + 9.0),
         Align2::RIGHT_CENTER,
-        "现在",
+        lang::t("现在", "now"),
         label_font,
         theme.faint,
     );
@@ -337,18 +338,22 @@ pub fn core_bars(
             if let Some(value) = values.get(index) {
                 let usage = format!("{value:.0}%");
                 let usage_color = theme.load(*value);
-                let title = format!("核心 {index}");
+                let title = if lang::is_en() {
+                    format!("Core {index}")
+                } else {
+                    format!("核心 {index}")
+                };
                 let frequency = frequencies
                     .get(index)
                     .copied()
                     .filter(|mhz| *mhz > 0)
                     .map(|mhz| format!("{:.2} GHz", mhz as f32 / 1000.0));
                 let rows: Vec<(String, String, Color32)> = core::iter::once((
-                    "使用率".to_string(),
+                    lang::t("使用率", "usage").to_string(),
                     usage,
                     usage_color,
                 ))
-                .chain(frequency.map(|mhz| ("频率".to_string(), mhz, theme.dim)))
+                .chain(frequency.map(|mhz| (lang::t("频率", "freq").to_string(), mhz, theme.dim)))
                 .collect();
                 // The bars' own painter is clipped to the 24 px strip, so the
                 // readout needs the card's clip rect, and its clamp must allow
@@ -409,7 +414,12 @@ fn readout(
 
 fn short_duration(seconds: f64) -> String {
     if seconds >= 90.0 {
-        format!("{:.0}分", seconds / 60.0)
+        if lang::is_en() {
+            format!("{:.0}m", seconds / 60.0)
+        } else {
+            format!("{:.0}分", seconds / 60.0)
+        }
+
     } else {
         format!("{:.0}s", seconds)
     }
