@@ -5,6 +5,7 @@
 //! instead of scrolling.
 
 use std::collections::HashMap;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
@@ -46,6 +47,18 @@ enum ProcessSort {
 
 /// Minimum widths for name, path, PID, CPU, memory, age, threads, handles.
 const PROCESS_WIDTH_MIN: [f32; 8] = [130.0, 100.0, 50.0, 60.0, 90.0, 60.0, 45.0, 45.0];
+
+struct IconRequest {
+    pid: u32,
+    create_time: u64,
+}
+
+struct IconResult {
+    pid: u32,
+    create_time: u64,
+    path: Option<String>,
+    image: Option<egui::ColorImage>,
+}
 
 #[derive(Clone, Copy)]
 struct Toggles {
@@ -89,6 +102,10 @@ pub struct Dashboard {
     process_selected_auto: bool,
     process_widths: [f32; 8],
     process_widths_total: f32,
+    process_pending: HashMap<u32, u64>,
+    process_scroll_at: Instant,
+    icon_tx: Sender<IconRequest>,
+    icon_rx: Receiver<IconResult>,
     process_paths: HashMap<u32, (u64, Option<String>)>,
     process_icons: HashMap<String, Option<TextureHandle>>,
     process_confirm: Option<u32>,
@@ -130,6 +147,7 @@ impl Dashboard {
         let interval = 1.0;
         let mut sampler = Sampler::new(interval, None, !lean);
         sampler.model.interval = interval;
+        let (icon_tx, icon_rx) = spawn_icon_worker();
         Self {
             sampler,
             dark,
@@ -155,6 +173,10 @@ impl Dashboard {
             process_selected_auto: true,
             process_widths: [0.0; 8],
             process_widths_total: 0.0,
+            process_pending: HashMap::new(),
+            process_scroll_at: Instant::now() - Duration::from_secs(10),
+            icon_tx,
+            icon_rx,
             process_paths: HashMap::new(),
             process_icons: HashMap::new(),
             process_confirm: None,
@@ -172,6 +194,33 @@ impl Dashboard {
             Theme::dark()
         } else {
             Theme::light()
+        }
+    }
+
+    fn poll_icon_events(&mut self, ctx: &egui::Context) {
+        let mut processed = 0;
+        while processed < 6 {
+            let Ok(result) = self.icon_rx.try_recv() else {
+                break;
+            };
+            processed += 1;
+            self.process_pending.remove(&result.pid);
+            if let Some(path) = result.path.clone() {
+                if !self.process_icons.contains_key(&path) {
+                    let image = result
+                        .image
+                        .map(|image| ctx.load_texture(path.clone(), image, egui::TextureOptions::LINEAR));
+                    self.process_icons.insert(path.clone(), image);
+                }
+                self.process_paths
+                    .insert(result.pid, (result.create_time, Some(path)));
+            } else {
+                self.process_paths
+                    .insert(result.pid, (result.create_time, None));
+            }
+        }
+        if processed > 0 {
+            ctx.request_repaint();
         }
     }
 
@@ -569,8 +618,9 @@ impl Dashboard {
             .unwrap_or(1)
             .max(1);
         let mut paths = std::mem::take(&mut self.process_paths);
-        let mut process_icons = std::mem::take(&mut self.process_icons);
-        let ctx = ui.ctx().clone();
+        let process_icons = std::mem::take(&mut self.process_icons);
+        let mut pending = std::mem::take(&mut self.process_pending);
+        let icon_tx = self.icon_tx.clone();
         let row_height = 28.0;
 
         egui::ScrollArea::vertical()
@@ -578,10 +628,16 @@ impl Dashboard {
             .show_rows(&mut child, row_height, rows.len(), |ui, range| {
                 for index in range {
                     let entry = rows[index];
-                    let path = cached_path(&mut paths, entry.pid, entry.create_time);
+                    let path = request_path(
+                        &mut paths,
+                        &mut pending,
+                        &icon_tx,
+                        entry.pid,
+                        entry.create_time,
+                    );
                     let icon = path
                         .as_deref()
-                        .and_then(|path| cached_icon(&ctx, &mut process_icons, path));
+                        .and_then(|path| process_icons.get(path).cloned().flatten());
                     let (row_rect, response) =
                         ui.allocate_exact_size(vec2(table_width, row_height), Sense::click());
                     let selected = selected_pid == Some(entry.pid);
@@ -753,6 +809,7 @@ impl Dashboard {
 
         self.process_paths = paths;
         self.process_icons = process_icons;
+        self.process_pending = pending;
         if let Some(pid) = select_request {
             self.process_selected = Some(pid);
             self.process_selected_auto = false;
@@ -785,11 +842,10 @@ impl Dashboard {
             let path = self
                 .process_paths
                 .get(&pid)
-                .and_then(|(_, path)| path.clone())
-                .or_else(|| process::image_path(pid));
+                .and_then(|(_, path)| path.clone());
             let icon = path
                 .as_deref()
-                .and_then(|path| cached_icon(ui.ctx(), &mut self.process_icons, path));
+                .and_then(|path| self.process_icons.get(path).cloned().flatten());
             let cpu = target.as_ref().map(|entry| entry.cpu_percent).unwrap_or(0.0);
             let memory = target
                 .as_ref()
@@ -962,8 +1018,7 @@ impl eframe::App for Dashboard {
             self.sampler.sample();
             self.last_sample = now;
         }
-        // One frame per sample is all the dashboard needs.
-        ui.ctx().request_repaint_after(Duration::from_secs_f64(self.interval));
+        self.poll_icon_events(ui.ctx());
 
         if ui.ctx().input(|input| input.key_pressed(egui::Key::Space)) {
             self.paused = !self.paused;
@@ -1007,6 +1062,26 @@ impl eframe::App for Dashboard {
         self.footer(ui, footer, &theme);
         self.frame_micros = frame_started.elapsed().as_micros() as u64;
 
+        if self.page == Page::Processes {
+            let scrolling = ui.ctx().input(|input| {
+                input.pointer.any_down() || input.smooth_scroll_delta().length_sq() > 0.0
+            });
+            if scrolling {
+                self.process_scroll_at = Instant::now();
+            }
+        }
+        let smooth = self.page == Page::Processes
+            && self.process_scroll_at.elapsed() < Duration::from_millis(400);
+        let pending_icons =
+            self.page == Page::Processes && !self.process_pending.is_empty();
+        let delay = if smooth {
+            Duration::from_millis(16)
+        } else if pending_icons {
+            Duration::from_millis(80)
+        } else {
+            Duration::from_secs_f64(self.interval)
+        };
+        ui.ctx().request_repaint_after(delay);
     }
 }
 
@@ -1794,8 +1869,10 @@ fn stat_pill(ui: &mut Ui, label: &str, color: Color32) {
         });
 }
 
-fn cached_path(
+fn request_path(
     cache: &mut HashMap<u32, (u64, Option<String>)>,
+    pending: &mut HashMap<u32, u64>,
+    tx: &Sender<IconRequest>,
     pid: u32,
     create_time: u64,
 ) -> Option<String> {
@@ -1804,24 +1881,53 @@ fn cached_path(
             return path.clone();
         }
     }
-    let path = process::image_path(pid);
-    cache.insert(pid, (create_time, path.clone()));
-    path
+    if pending.get(&pid) != Some(&create_time) {
+        if tx
+            .send(IconRequest {
+                pid,
+                create_time,
+            })
+            .is_ok()
+        {
+            pending.insert(pid, create_time);
+        }
+    }
+    None
 }
 
-fn cached_icon(
-    ctx: &egui::Context,
-    cache: &mut HashMap<String, Option<TextureHandle>>,
-    path: &str,
-) -> Option<TextureHandle> {
-    if let Some(entry) = cache.get(path) {
-        return entry.clone();
+fn spawn_icon_worker() -> (Sender<IconRequest>, Receiver<IconResult>) {
+    let (request_tx, request_rx) = mpsc::channel();
+    let (result_tx, result_rx) = mpsc::channel();
+    let _ = std::thread::Builder::new()
+        .name("monitor-icons".to_string())
+        .spawn(move || icon_worker(request_rx, result_tx));
+    (request_tx, result_rx)
+}
+
+fn icon_worker(rx: Receiver<IconRequest>, tx: Sender<IconResult>) {
+    let mut cache: HashMap<String, Option<egui::ColorImage>> = HashMap::new();
+    while let Ok(request) = rx.recv() {
+        let path = process::image_path(request.pid);
+        let image = path.as_deref().and_then(|path| {
+            if let Some(image) = cache.get(path) {
+                return image.clone();
+            }
+            let image = icons::load(path);
+            cache.insert(path.to_string(), image.clone());
+            image
+        });
+        if tx
+            .send(IconResult {
+                pid: request.pid,
+                create_time: request.create_time,
+                path,
+                image,
+            })
+            .is_err()
+        {
+            break;
+        }
     }
-    let handle = icons::load(path).map(|image| {
-        ctx.load_texture(path.to_string(), image, egui::TextureOptions::LINEAR)
-    });
-    cache.insert(path.to_string(), handle.clone());
-    handle
 }
 
 fn paint_fallback_icon(painter: &Painter, rect: Rect, name: &str, theme: &Theme) {

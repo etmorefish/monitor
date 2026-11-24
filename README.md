@@ -219,7 +219,7 @@ monitor-gui --processes                  # 直接打开进程页
 
 ![结束进程确认](docs/gui-kill-dialog.png)
 
-图标走 Windows Shell（`SHGetFileInfoW`）+ GDI 转 RGBA 纹理，按 exe 路径缓存；受保护进程拿不到路径时退化为彩色首字母徽章，不会阻塞列表。
+图标走 Windows Shell（`SHGetFileInfoW`）+ GDI 转 RGBA 纹理，按 exe 路径缓存；受保护进程拿不到路径时退化为彩色首字母徽章，不会阻塞列表。路径和图标都在后台线程加载，滚动/拖滚动条时临时提升到 60fps 重绘，滚轮不再被同步 Shell 调用卡住。
 
 几条一期优化后的细节：
 
