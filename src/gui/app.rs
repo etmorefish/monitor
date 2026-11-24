@@ -315,6 +315,15 @@ impl Dashboard {
                 .layout(Layout::top_down(Align::Min)),
         );
         child.spacing_mut().item_spacing = vec2(8.0, 4.0);
+        let summary_rect = Rect::from_min_size(content.min, vec2(content.width(), 54.0));
+        paint_process_summary(
+            ui.painter(),
+            summary_rect,
+            theme,
+            &self.sampler.model.snap,
+            &self.sampler.model.history,
+        );
+        child.add_space(62.0);
 
         let mut refresh = false;
         let mut sort_request: Option<(ProcessSort, bool)> = None;
@@ -763,20 +772,45 @@ impl Dashboard {
         }
 
         if let Some(pid) = self.process_confirm {
-            let name = self
+            let target = self
                 .processes
                 .entries
                 .iter()
                 .find(|entry| entry.pid == pid)
+                .cloned();
+            let name = target
+                .as_ref()
                 .map(|entry| entry.name.clone())
                 .unwrap_or_else(|| format!("PID {pid}"));
+            let path = self
+                .process_paths
+                .get(&pid)
+                .and_then(|(_, path)| path.clone())
+                .or_else(|| process::image_path(pid));
+            let icon = path
+                .as_deref()
+                .and_then(|path| cached_icon(ui.ctx(), &mut self.process_icons, path));
+            let cpu = target.as_ref().map(|entry| entry.cpu_percent).unwrap_or(0.0);
+            let memory = target
+                .as_ref()
+                .map(|entry| entry.private_bytes)
+                .unwrap_or(0);
+            let threads = target.as_ref().map(|entry| entry.threads).unwrap_or(0);
             let mut confirm = false;
             let mut cancel = false;
+
+            let screen = ui.ctx().input(|input| input.viewport_rect());
+            let overlay =
+                egui::LayerId::new(egui::Order::Middle, Id::unique("monitor-kill-dim"));
+            ui.ctx()
+                .layer_painter(overlay)
+                .rect_filled(screen, 0.0, Color32::from_black_alpha(80));
+
             let dialog = egui::Frame::new()
                 .fill(theme.card)
                 .stroke(Stroke::new(1.0, theme.border))
-                .corner_radius(12.0)
-                .inner_margin(egui::Margin::symmetric(18, 14));
+                .corner_radius(14.0)
+                .inner_margin(egui::Margin::symmetric(20, 16));
             egui::Window::new("结束进程")
                 .id(Id::unique("monitor-kill-confirm"))
                 .title_bar(false)
@@ -785,42 +819,90 @@ impl Dashboard {
                 .resizable(false)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| {
+                    ui.set_min_width(390.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("●").size(12.0).color(theme.bad));
-                        ui.label(
-                            RichText::new("结束进程")
-                                .size(14.0)
-                                .strong()
-                                .color(theme.text),
-                        );
+                        let (icon_rect, _) =
+                            ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
+                        if let Some(icon) = &icon {
+                            ui.painter().image(
+                                icon.id(),
+                                icon_rect,
+                                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                                Color32::WHITE,
+                            );
+                        } else {
+                            paint_fallback_icon(ui.painter(), icon_rect, &name, theme);
+                        }
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new("结束进程")
+                                    .size(10.0)
+                                    .color(theme.bad),
+                            );
+                            ui.label(
+                                RichText::new(&name)
+                                    .size(15.0)
+                                    .strong()
+                                    .color(theme.text),
+                            );
+                            ui.label(
+                                RichText::new(format!("PID {pid}"))
+                                    .size(10.0)
+                                    .color(theme.faint),
+                            );
+                        });
                     });
-                    ui.add_space(4.0);
+                    ui.add_space(8.0);
+                    if let Some(path) = &path {
+                        ui.label(
+                            RichText::new(format::truncate(path, 62))
+                                .size(9.5)
+                                .color(theme.faint),
+                        );
+                    }
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        stat_pill(ui, &format!("CPU {cpu:.1}%"), theme.load(cpu));
+                        stat_pill(
+                            ui,
+                            &format!("内存 {}", format::bytes(memory)),
+                            theme.memory,
+                        );
+                        stat_pill(ui, &format!("{threads} 线程"), theme.dim);
+                    });
+                    ui.add_space(8.0);
                     ui.label(
-                        RichText::new(format!("确定结束 {name}（PID {pid}）？"))
-                            .size(11.0)
-                            .color(theme.dim),
+                        RichText::new("结束后，该进程未保存的数据会丢失。")
+                            .size(10.0)
+                            .color(theme.warn),
                     );
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        let end = egui::Button::new(
-                            RichText::new("结束").size(11.0).color(theme.bad),
-                        )
-                        .fill(Theme::alpha(theme.bad, 16))
-                        .stroke(Stroke::new(1.0, Theme::alpha(theme.bad, 60)));
-                        if ui.add(end).clicked() {
-                            confirm = true;
-                        }
                         if ui.button("取消").clicked() {
                             cancel = true;
                         }
+                        let end = egui::Button::new(
+                            RichText::new("结束进程").size(11.0).color(Color32::WHITE),
+                        )
+                        .fill(theme.bad)
+                        .stroke(Stroke::new(1.0, theme.bad));
+                        if ui.add_sized([150.0, 28.0], end).clicked() {
+                            confirm = true;
+                        }
                     });
                 });
+            if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
+                cancel = true;
+            }
             if confirm {
                 match process::kill(pid) {
                     Ok(()) => {
                         self.process_message = Some((format!("已结束 {name}（PID {pid}）"), true));
                         self.processes = self.process_sampler.sample();
                         self.process_at = Instant::now();
+                        self.sampler.sample();
+                        self.last_sample = Instant::now();
                     }
                     Err(message) => {
                         self.process_message = Some((format!("{name}：{message}"), false));
@@ -1586,6 +1668,119 @@ fn format_age(seconds: u64) -> String {
         format!("{}时{}分", seconds / 3_600, seconds % 3_600 / 60)
     } else {
         format!("{}天{}时", seconds / 86_400, seconds % 86_400 / 3_600)
+    }
+}
+
+fn paint_process_summary(
+    painter: &Painter,
+    rect: Rect,
+    theme: &Theme,
+    snap: &Snapshot,
+    history: &History,
+) {
+    let gap = 10.0;
+    let width = (rect.width() - gap) * 0.5;
+    let cpu_rect = Rect::from_min_size(rect.min, vec2(width, rect.height()));
+    let mem_rect = Rect::from_min_size(
+        pos2(rect.left() + width + gap, rect.top()),
+        vec2(width, rect.height()),
+    );
+
+    let cpu = snap.cpu.total;
+    let cpu_color = theme.load(cpu);
+    paint_summary_tile(painter, cpu_rect, theme, theme.cpu);
+    text(
+        painter,
+        pos2(cpu_rect.left() + 12.0, cpu_rect.top() + 7.0),
+        Align2::LEFT_TOP,
+        "CPU 总占用",
+        9.5,
+        theme.dim,
+    );
+    text(
+        painter,
+        pos2(cpu_rect.left() + 12.0, cpu_rect.top() + 18.0),
+        Align2::LEFT_TOP,
+        format!("{cpu:.1}%"),
+        20.0,
+        cpu_color,
+    );
+    let spark = Rect::from_min_max(
+        pos2(cpu_rect.left() + 104.0, cpu_rect.top() + 9.0),
+        pos2(cpu_rect.right() - 12.0, cpu_rect.top() + 31.0),
+    );
+    paint_sparkline(painter, spark, history.cpu.slice(), 100.0, cpu_color);
+    let bar = Rect::from_min_size(
+        pos2(cpu_rect.left() + 12.0, cpu_rect.bottom() - 10.0),
+        vec2(cpu_rect.width() - 24.0, 4.0),
+    );
+    chart::hbar(painter, bar, cpu / 100.0, cpu_color, theme.grid);
+
+    let memory = &snap.memory;
+    paint_summary_tile(painter, mem_rect, theme, theme.memory);
+    text(
+        painter,
+        pos2(mem_rect.left() + 12.0, mem_rect.top() + 7.0),
+        Align2::LEFT_TOP,
+        "内存",
+        9.5,
+        theme.dim,
+    );
+    text(
+        painter,
+        pos2(mem_rect.left() + 12.0, mem_rect.top() + 18.0),
+        Align2::LEFT_TOP,
+        format::bytes(memory.used()),
+        20.0,
+        theme.text,
+    );
+    text(
+        painter,
+        pos2(mem_rect.right() - 12.0, mem_rect.top() + 24.0),
+        Align2::RIGHT_TOP,
+        format!(" / {}", format::bytes(memory.total)),
+        9.5,
+        theme.faint,
+    );
+    let bar = Rect::from_min_size(
+        pos2(mem_rect.left() + 12.0, mem_rect.bottom() - 10.0),
+        vec2(mem_rect.width() - 24.0, 4.0),
+    );
+    chart::hbar(
+        painter,
+        bar,
+        memory.percent() / 100.0,
+        theme.memory,
+        theme.grid,
+    );
+}
+
+fn paint_summary_tile(painter: &Painter, rect: Rect, theme: &Theme, accent: Color32) {
+    painter.rect_filled(rect, CornerRadius::same(8), Theme::alpha(accent, 8));
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(8),
+        Stroke::new(1.0, Theme::alpha(theme.border, 160)),
+        StrokeKind::Inside,
+    );
+}
+
+fn paint_sparkline(painter: &Painter, rect: Rect, values: &[f32], max: f32, color: Color32) {
+    let visible = values.len().saturating_sub(60);
+    let values = &values[visible..];
+    if values.len() < 2 || rect.width() < 8.0 {
+        return;
+    }
+    let mut previous = None;
+    for (index, value) in values.iter().enumerate() {
+        let x = rect.left()
+            + rect.width() * index as f32 / (values.len() - 1) as f32;
+        let y = rect.bottom() - rect.height() * (value / max).clamp(0.0, 1.0);
+        let point = pos2(x, y);
+        if let Some(previous) = previous {
+            painter.line_segment([previous, point], Stroke::new(1.2, color));
+        }
+        previous = Some(point);
     }
 }
 
