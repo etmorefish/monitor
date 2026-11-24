@@ -859,30 +859,19 @@ impl Dashboard {
             let mut confirm = false;
             let mut cancel = false;
 
-            let screen = ui.ctx().input(|input| input.viewport_rect());
-            let overlay =
-                egui::LayerId::new(egui::Order::Middle, Id::unique("monitor-kill-dim"));
-            ui.ctx()
-                .layer_painter(overlay)
-                .rect_filled(screen, 0.0, Color32::from_black_alpha(80));
-
             let dialog = egui::Frame::new()
                 .fill(theme.card)
                 .stroke(Stroke::new(1.0, theme.border))
                 .corner_radius(14.0)
-                .inner_margin(egui::Margin::symmetric(20, 16));
-            egui::Window::new("结束进程")
-                .id(Id::unique("monitor-kill-confirm"))
-                .title_bar(false)
+                .inner_margin(egui::Margin::symmetric(22, 18));
+            let modal = egui::Modal::new(Id::unique("monitor-kill-confirm"))
+                .backdrop_color(Color32::from_black_alpha(70))
                 .frame(dialog)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| {
-                    ui.set_min_width(390.0);
+                    ui.set_width(420.0);
                     ui.horizontal(|ui| {
                         let (icon_rect, _) =
-                            ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
+                            ui.allocate_exact_size(vec2(42.0, 42.0), Sense::hover());
                         if let Some(icon) = &icon {
                             ui.painter().image(
                                 icon.id(),
@@ -893,16 +882,16 @@ impl Dashboard {
                         } else {
                             paint_fallback_icon(ui.painter(), icon_rect, &name, theme);
                         }
-                        ui.add_space(6.0);
+                        ui.add_space(10.0);
                         ui.vertical(|ui| {
                             ui.label(
                                 RichText::new("结束进程")
-                                    .size(10.0)
+                                    .size(10.5)
                                     .color(theme.bad),
                             );
                             ui.label(
                                 RichText::new(&name)
-                                    .size(15.0)
+                                    .size(17.0)
                                     .strong()
                                     .color(theme.text),
                             );
@@ -916,30 +905,55 @@ impl Dashboard {
                     ui.add_space(8.0);
                     if let Some(path) = &path {
                         ui.label(
-                            RichText::new(format::truncate(path, 62))
+                            RichText::new(format::truncate(path, 64))
                                 .size(9.5)
                                 .color(theme.faint),
                         );
                     }
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        stat_pill(ui, &format!("CPU {cpu:.1}%"), theme.load(cpu));
-                        stat_pill(
-                            ui,
-                            &format!("内存 {}", format::bytes(memory)),
-                            theme.memory,
+                    ui.add_space(10.0);
+                    ui.columns_const::<3, _>(|columns| {
+                        dialog_stat(
+                            &mut columns[0],
+                            "CPU",
+                            &format!("{cpu:.1}%"),
+                            theme.load(cpu),
+                            theme,
                         );
-                        stat_pill(ui, &format!("{threads} 线程"), theme.dim);
+                        dialog_stat(
+                            &mut columns[1],
+                            "内存",
+                            &format::bytes(memory),
+                            theme.memory,
+                            theme,
+                        );
+                        dialog_stat(
+                            &mut columns[2],
+                            "线程",
+                            &threads.to_string(),
+                            theme.dim,
+                            theme,
+                        );
                     });
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new("结束后，该进程未保存的数据会丢失。")
-                            .size(10.0)
-                            .color(theme.warn),
-                    );
-                    ui.add_space(8.0);
+                    ui.add_space(10.0);
+                    egui::Frame::new()
+                        .fill(Theme::alpha(theme.warn, 8))
+                        .stroke(Stroke::new(1.0, Theme::alpha(theme.warn, 35)))
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::symmetric(10, 7))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("结束后，该进程未保存的数据会丢失。")
+                                    .size(10.0)
+                                    .color(theme.warn),
+                            );
+                        });
+                    ui.add_space(12.0);
+                    let button_width = (ui.available_width() - 8.0) * 0.5;
                     ui.horizontal(|ui| {
-                        if ui.button("取消").clicked() {
+                        if ui
+                            .add_sized([button_width, 32.0], egui::Button::new("取消"))
+                            .clicked()
+                        {
                             cancel = true;
                         }
                         let end = egui::Button::new(
@@ -947,12 +961,12 @@ impl Dashboard {
                         )
                         .fill(theme.bad)
                         .stroke(Stroke::new(1.0, theme.bad));
-                        if ui.add_sized([150.0, 28.0], end).clicked() {
+                        if ui.add_sized([button_width, 32.0], end).clicked() {
                             confirm = true;
                         }
                     });
                 });
-            if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
+            if modal.should_close() {
                 cancel = true;
             }
             if confirm {
@@ -1861,6 +1875,25 @@ fn paint_sparkline(painter: &Painter, rect: Rect, values: &[f32], max: f32, colo
         }
         previous = Some(point);
     }
+}
+
+fn dialog_stat(
+    ui: &mut Ui,
+    label: &str,
+    value: &str,
+    color: Color32,
+    theme: &Theme,
+) {
+    egui::Frame::new()
+        .fill(Theme::alpha(color, 10))
+        .stroke(Stroke::new(1.0, Theme::alpha(color, 35)))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(label).size(9.0).color(theme.faint));
+            ui.label(RichText::new(value).size(14.5).strong().color(color));
+        });
 }
 
 fn stat_pill(ui: &mut Ui, label: &str, color: Color32) {
