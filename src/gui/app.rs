@@ -44,6 +44,9 @@ enum ProcessSort {
     Handles,
 }
 
+/// Minimum widths for name, path, PID, CPU, memory, age, threads, handles.
+const PROCESS_WIDTH_MIN: [f32; 8] = [130.0, 100.0, 50.0, 60.0, 90.0, 60.0, 45.0, 45.0];
+
 #[derive(Clone, Copy)]
 struct Toggles {
     read: bool,
@@ -84,6 +87,8 @@ pub struct Dashboard {
     process_ascending: bool,
     process_selected: Option<u32>,
     process_selected_auto: bool,
+    process_widths: [f32; 8],
+    process_widths_total: f32,
     process_paths: HashMap<u32, (u64, Option<String>)>,
     process_icons: HashMap<String, Option<TextureHandle>>,
     process_confirm: Option<u32>,
@@ -148,6 +153,8 @@ impl Dashboard {
             process_ascending: false,
             process_selected: None,
             process_selected_auto: true,
+            process_widths: [0.0; 8],
+            process_widths_total: 0.0,
             process_paths: HashMap::new(),
             process_icons: HashMap::new(),
             process_confirm: None,
@@ -348,29 +355,55 @@ impl Dashboard {
         let current_ascending = self.process_ascending;
         let gap = 8.0;
         let icon_w = 26.0;
-        let pid_w = 58.0;
-        let cpu_w = 76.0;
-        let mem_w = 140.0;
-        let age_w = 78.0;
-        let threads_w = 54.0;
-        let handles_w = 54.0;
         let kill_w = 54.0;
-        let fixed = icon_w
-            + pid_w
-            + cpu_w
-            + mem_w
-            + age_w
-            + threads_w
-            + handles_w
-            + kill_w
-            + gap * 9.0;
-        let extra = (content.width() - fixed).max(250.0);
-        let path_w = (extra * 0.42).clamp(130.0, 320.0);
-        let name_w = (extra - path_w).max(130.0);
-        let table_width = fixed + path_w + name_w;
+        let target = (content.width() - icon_w - kill_w - gap * 9.0).max(580.0);
+        fit_process_widths(&mut self.process_widths, &mut self.process_widths_total, target);
+        let mut widths = self.process_widths;
+        let query = self.process_search.trim().to_lowercase();
+        let visible_count = self
+            .processes
+            .entries
+            .iter()
+            .filter(|entry| {
+                query.is_empty()
+                    || entry.name.to_lowercase().contains(&query)
+                    || entry.pid.to_string().contains(&query)
+            })
+            .count();
+        child.label(
+            RichText::new(format!("显示 {visible_count} / {total} 个进程"))
+                .size(9.5)
+                .color(theme.faint),
+        );
 
-        let mut header_cell = |ui: &mut Ui, label: &str, width: f32, sort: ProcessSort, right: bool| {
-            let active = current_sort == sort;
+        let table_width =
+            icon_w + kill_w + gap * 9.0 + widths.iter().sum::<f32>();
+        let (header_rect, _) =
+            child.allocate_exact_size(vec2(table_width, 24.0), Sense::hover());
+        let painter = child.painter().clone();
+        painter.rect_filled(
+            header_rect,
+            CornerRadius::same(5),
+            Theme::alpha(theme.grid, 16),
+        );
+        let headers: [(&str, Option<ProcessSort>, bool); 8] = [
+            ("名称", Some(ProcessSort::Name), false),
+            ("路径", None, false),
+            ("PID", Some(ProcessSort::Pid), true),
+            ("CPU", Some(ProcessSort::Cpu), true),
+            ("内存", Some(ProcessSort::Memory), true),
+            ("启动", Some(ProcessSort::Age), true),
+            ("线程", Some(ProcessSort::Threads), true),
+            ("句柄", Some(ProcessSort::Handles), true),
+        ];
+        let mut x = header_rect.left() + icon_w + gap;
+        for (index, (label, sort, right)) in headers.iter().enumerate() {
+            let width = widths[index];
+            let col = Rect::from_min_size(
+                pos2(x, header_rect.top()),
+                vec2(width, header_rect.height()),
+            );
+            let active = *sort == Some(current_sort);
             let arrow = if active {
                 if current_ascending {
                     " ↑"
@@ -381,29 +414,109 @@ impl Dashboard {
                 ""
             };
             let color = if active { theme.accent } else { theme.dim };
-            if table_header(ui, width, &format!("{label}{arrow}"), color, right) {
-                let descending = sort != ProcessSort::Name;
-                sort_request = Some((
-                    sort,
-                    if active { !current_ascending } else { !descending },
-                ));
+            let (pos, anchor) = if *right {
+                (
+                    pos2(col.right() - 2.0, col.center().y),
+                    Align2::RIGHT_CENTER,
+                )
+            } else {
+                (
+                    pos2(col.left() + 2.0, col.center().y),
+                    Align2::LEFT_CENTER,
+                )
+            };
+            painter.text(
+                pos,
+                anchor,
+                format!("{label}{arrow}"),
+                FontId::proportional(10.0),
+                color,
+            );
+            if let Some(sort) = sort {
+                let click_rect = Rect::from_min_size(
+                    col.min,
+                    vec2((width - gap * 0.75).max(24.0), col.height()),
+                );
+                let response = child.interact(
+                    click_rect,
+                    Id::unique(("process-header", index)),
+                    Sense::click(),
+                );
+                if response.hovered() {
+                    child.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if response.clicked() {
+                    let descending = *sort != ProcessSort::Name;
+                    sort_request = Some((
+                        *sort,
+                        if active { !current_ascending } else { !descending },
+                    ));
+                }
             }
-        };
-        child.horizontal(|ui| {
-            ui.add_space(icon_w);
-            header_cell(ui, "名称", name_w, ProcessSort::Name, false);
-            table_text(ui, path_w, "路径", 9.5, theme.faint, false);
-            header_cell(ui, "PID", pid_w, ProcessSort::Pid, true);
-            header_cell(ui, "CPU", cpu_w, ProcessSort::Cpu, true);
-            header_cell(ui, "内存", mem_w, ProcessSort::Memory, true);
-            header_cell(ui, "启动", age_w, ProcessSort::Age, true);
-            header_cell(ui, "线程", threads_w, ProcessSort::Threads, true);
-            header_cell(ui, "句柄", handles_w, ProcessSort::Handles, true);
-            ui.add_space(kill_w);
-        });
+            x += width + gap;
+        }
 
+        let mut boundary_x = header_rect.left() + icon_w + gap;
+        for index in 0..widths.len() {
+            boundary_x += widths[index];
+            if index + 1 < widths.len() {
+                let handle = Rect::from_center_size(
+                    pos2(boundary_x + gap * 0.5, header_rect.center().y),
+                    vec2(12.0, 28.0),
+                );
+                let response = child.interact(
+                    handle,
+                    Id::unique(("process-resize", index)),
+                    Sense::drag(),
+                );
+                if response.hovered() || response.dragged() {
+                    child
+                        .ctx()
+                        .set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                    painter.rect_filled(
+                        Rect::from_center_size(
+                            handle.center(),
+                            vec2(2.0, 15.0),
+                        ),
+                        CornerRadius::same(1),
+                        theme.accent,
+                    );
+                } else {
+                    painter.rect_filled(
+                        Rect::from_center_size(
+                            handle.center(),
+                            vec2(1.5, 15.0),
+                        ),
+                        CornerRadius::same(1),
+                        Theme::alpha(theme.dim, 90),
+                    );
+                }
+                if response.dragged() {
+                    let dx = child.input(|input| input.pointer.delta().x);
+                    if dx.abs() > 0.01 {
+                        resize_process_widths(&mut widths, index, dx);
+                    }
+                    child.ctx().request_repaint();
+                }
+            }
+            boundary_x += gap;
+        }
+        self.process_widths = widths;
+        painter.hline(
+            header_rect.x_range(),
+            header_rect.bottom() - 0.5,
+            Stroke::new(1.0, theme.border),
+        );
+
+        let name_w = widths[0];
+        let path_w = widths[1];
+        let pid_w = widths[2];
+        let cpu_w = widths[3];
+        let mem_w = widths[4];
+        let age_w = widths[5];
+        let threads_w = widths[6];
+        let handles_w = widths[7];
         let (sort, ascending) = sort_request.unwrap_or((current_sort, current_ascending));
-        let query = self.process_search.trim().to_lowercase();
         let mut rows: Vec<&ProcessEntry> = self
             .processes
             .entries
@@ -451,11 +564,6 @@ impl Dashboard {
         let ctx = ui.ctx().clone();
         let row_height = 28.0;
 
-        child.label(
-            RichText::new(format!("显示 {} / {} 个进程", rows.len(), total))
-                .size(9.5)
-                .color(theme.faint),
-        );
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_rows(&mut child, row_height, rows.len(), |ui, range| {
@@ -1425,37 +1533,48 @@ fn thermal_card(
 
 // --- helpers ----------------------------------------------------------------
 
-fn table_text(
-    ui: &mut Ui,
-    width: f32,
-    value: &str,
-    size: f32,
-    color: Color32,
-    right: bool,
-) {
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 20.0), Sense::hover());
-    let (pos, anchor) = if right {
-        (pos2(rect.right() - 2.0, rect.center().y), Align2::RIGHT_CENTER)
-    } else {
-        (pos2(rect.left() + 2.0, rect.center().y), Align2::LEFT_CENTER)
-    };
-    ui.painter()
-        .text(pos, anchor, value, FontId::proportional(size), color);
+fn fit_process_widths(widths: &mut [f32; 8], total: &mut f32, target: f32) {
+    let mins = PROCESS_WIDTH_MIN;
+    if *total <= 0.0 {
+        let numeric = 58.0 + 76.0 + 140.0 + 78.0 + 54.0 + 54.0;
+        let flexible = (target - numeric).max(200.0);
+        *widths = [
+            flexible * 0.58,
+            flexible * 0.42,
+            58.0,
+            76.0,
+            140.0,
+            78.0,
+            54.0,
+            54.0,
+        ];
+    } else if (*total - target).abs() > 0.5 {
+        let sum: f32 = widths.iter().sum();
+        if sum > 0.0 {
+            let scale = target / sum;
+            for (width, min) in widths.iter_mut().zip(mins.iter()) {
+                *width = (*width * scale).max(*min);
+            }
+        }
+    }
+    let sum: f32 = widths.iter().sum();
+    widths[0] = (widths[0] + target - sum).max(mins[0]);
+    *total = target;
 }
 
-fn table_header(ui: &mut Ui, width: f32, label: &str, color: Color32, right: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 20.0), Sense::click());
-    if response.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(4), Theme::alpha(color, 16));
+fn resize_process_widths(widths: &mut [f32; 8], boundary: usize, delta: f32) {
+    if boundary + 1 >= widths.len() {
+        return;
     }
-    let (pos, anchor) = if right {
-        (pos2(rect.right() - 2.0, rect.center().y), Align2::RIGHT_CENTER)
-    } else {
-        (pos2(rect.left() + 2.0, rect.center().y), Align2::LEFT_CENTER)
-    };
-    ui.painter()
-        .text(pos, anchor, label, FontId::proportional(10.0), color);
-    response.clicked()
+    let mins = PROCESS_WIDTH_MIN;
+    let left = widths[boundary];
+    let right = widths[boundary + 1];
+    let delta = delta.clamp(
+        -(left - mins[boundary]),
+        right - mins[boundary + 1],
+    );
+    widths[boundary] = left + delta;
+    widths[boundary + 1] = right - delta;
 }
 
 fn format_age(seconds: u64) -> String {
